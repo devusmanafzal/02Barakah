@@ -475,7 +475,7 @@ function QiyamPlanner() {
               )}
             </div>
             <div className="legend">
-              <span className="lg"><i style={{ background: "var(--indigo)" }} />Recommended · last third</span>
+              <span className="lg"><i style={{ background: "var(--indigo)" }} />Recommended Tahajud Time · last third</span>
               <span className="lg"><i style={{ background: "var(--amber)" }} />Optimistic · Fajr−45</span>
               <span className="lg"><i className="dotNow" />Now</span>
             </div>
@@ -485,7 +485,7 @@ function QiyamPlanner() {
         {night && (
           <section className="times">
             <Row name="Maghrib" time={fmtTime(night.maghrib)} />
-            <Row name="Recommended" accent="indigo" time={fmtTime(night.lastThird)}
+            <Row name="Recommended Tahajud Time" accent="indigo" time={fmtTime(night.lastThird)}
               info={<InfoDot id="rec" openId={openId} setOpenId={setOpenId} label="About recommended">
                 <b>The last third of the night.</b> The classically recommended window for Qiyām — the time the Prophet ﷺ described as most beloved for standing in prayer. Begins {fmtTime(night.lastThird)} and runs to Fajr.
               </InfoDot>} />
@@ -554,7 +554,8 @@ const CSS = `
 .qp-wrap{ position:relative; max-width:460px; margin:0 auto; padding:26px 20px 40px;
   display:flex; flex-direction:column; gap:18px; animation:fade .7s ease both; }
 @keyframes fade{ from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none} }
-.hdr{ display:flex; justify-content:space-between; align-items:flex-start; }
+.hdr{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:12px; }
+.hdr > div{ justify-self:center; text-align:center; }
 .hdr h1{ font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;
   font-weight:600; font-size:30px; letter-spacing:.3px; margin:0; line-height:1; }
 .sub{ margin:4px 0 0; color:var(--muted); font-size:12.5px; letter-spacing:.14em; text-transform:uppercase; }
