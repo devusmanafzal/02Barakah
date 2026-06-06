@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0E1320" />
+<title>Qiyam al-Layl — Night Prayer Planner</title>
+<style>
+  html,body{height:100%;margin:0;background:#F4F1E9}
+  #root{min-height:100%}
+  #root:empty::after{content:"Loading…";display:block;text-align:center;padding:40px;color:#71748A;font-family:system-ui,sans-serif}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* ============================================================================
+   Qiyam al-Layl — Night Prayer Planner
+   Self-contained React component. No external libraries, no storage, no build
+   config required. Only peer dependency is React.
+
+   Night = Maghrib (sunset) -> Fajr. Fajr uses an 18° depression by default;
+   during high-latitude white nights it switches to an angle-based rule, tuned
+   to ~13° inside Sweden (to track Islamiska Förbundet) and 18° elsewhere.
+   "Recommended" = start of the last third. "Optimistic" = Fajr − 45 min, a
+   PERSONAL practical method (clearly disclaimed), not a fiqh ruling.
+   ========================================================================== */
+
+/* ----------------------------- solar math --------------------------------- */
+const dtr = (d) => (d * Math.PI) / 180;
+const rtd = (r) => (r * 180) / Math.PI;
+const sin = (d) => Math.sin(dtr(d));
+const cos = (d) => Math.cos(dtr(d));
+const arcsin = (x) => rtd(Math.asin(x));
+const arccos = (x) => rtd(Math.acos(x));
+const arctan2 = (y, x) => rtd(Math.atan2(y, x));
+const fixAngle = (a) => { a = a - 360 * Math.floor(a / 360); return a < 0 ? a + 360 : a; };
+const fixHour = (a) => { a = a - 24 * Math.floor(a / 24); return a < 0 ? a + 24 : a; };
+
+function julian(y, m, d) {
+  if (m <= 2) { y -= 1; m += 12; }
+  const A = Math.floor(y / 100);
+  const B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5;
+}
+function sunPosition(jd) {
+  const D = jd - 2451545.0;
+  const g = fixAngle(357.529 + 0.98560028 * D);
+  const q = fixAngle(280.459 + 0.98564736 * D);
+  const L = fixAngle(q + 1.915 * sin(g) + 0.02 * sin(2 * g));
+  const e = 23.439 - 0.00000036 * D;
+  const RA = arctan2(cos(e) * sin(L), cos(L)) / 15;
+  const decl = arcsin(sin(e) * sin(L));
+  const EqT = q / 15 - fixHour(RA);
+  return { decl, EqT };
+}
+function makeDay(lat, lng, tz, y, m, d) {
+  const jDate = julian(y, m, d) - lng / (15 * 24);
+  const midDay = (t) => { const eqt = sunPosition(jDate + t).EqT; return fixHour(12 - eqt); };
+  const sunAngleTime = (angle, t, dir) => {
+    const decl = sunPosition(jDate + t).decl;
+    const noon = midDay(t);
+    const x = (-sin(angle) - sin(decl) * sin(lat)) / (cos(decl) * cos(lat));
+    if (x < -1 || x > 1) return NaN;
+    const T = (1 / 15) * arccos(x);
+    return noon + (dir === "ccw" ? -T : T);
+  };
+  const adj = (t) => (isNaN(t) ? NaN : t + tz - lng / 15);
+  return {
+    sunrise: adj(sunAngleTime(0.833, 6 / 24, "ccw")),
+    sunset: adj(sunAngleTime(0.833, 18 / 24)),
+  };
+}
+function isInSweden(lat, lng) {
+  return lat >= 55.0 && lat <= 69.1 && lng >= 10.9 && lng <= 24.2;
+}
+function computeNight(lat, lng, tzForDate, y, m, d, fajrAngle) {
+  const tz0 = tzForDate(y, m, d);
+  const today = makeDay(lat, lng, tz0, y, m, d);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const ny = next.getUTCFullYear(), nm = next.getUTCMonth() + 1, nd = next.getUTCDate();
+  const tz1 = tzForDate(ny, nm, nd);
+  const tomorrow = makeDay(lat, lng, tz1, ny, nm, nd);
+
+  const sunset = today.sunset;
+  const sunriseNext = tomorrow.sunrise;
+  if (isNaN(sunset) || isNaN(sunriseNext)) return { polar: true };
+
+  const maghrib = sunset;
+  const sunriseAbs = sunriseNext + 24;
+  const nightAstro = sunriseAbs - maghrib;
+
+  const jD = julian(ny, nm, nd) - lng / (15 * 24);
+  const decl = sunPosition(jD + 5 / 24).decl;
+  const midday = fixHour(12 - sunPosition(jD + 5 / 24).EqT);
+  const xx = (-sin(fajrAngle) - sin(decl) * sin(lat)) / (cos(decl) * cos(lat));
+  let fajr, highLat = false;
+  if (xx >= -1 && xx <= 1) {
+    const T = (1 / 15) * arccos(xx);
+    fajr = (midday - T) + tz1 - lng / 15 + 24;
+    if (fajr >= sunriseAbs) highLat = true;
+  } else highLat = true;
+
+  if (highLat) {
+    const tunedAngle = isInSweden(lat, lng) ? 13 : fajrAngle;
+    fajr = sunriseAbs - (tunedAngle / 60) * nightAstro;
+  }
+
+  const nightLen = fajr - maghrib;
+  const phase = (f) => maghrib + nightLen * f;
+  return {
+    polar: false, highLat, maghrib, fajr, sunriseAbs, nightLen,
+    sixth1: phase(1 / 6), third1: phase(1 / 3), half: phase(1 / 2),
+    lastThird: phase(2 / 3), lastSixth: phase(5 / 6),
+    optimistic: fajr - 45 / 60,
+  };
+}
+function qiblaBearing(lat, lng) {
+  const KLAT = 21.4225, KLNG = 39.8262;
+  const dL = KLNG - lng;
+  const y = sin(dL) * cos(KLAT);
+  const x = cos(lat) * sin(KLAT) - sin(lat) * cos(KLAT) * cos(dL);
+  return (arctan2(y, x) + 360) % 360;
+}
+function gregToHijri(gy, gm, gd) {
+  let jd;
+  if (gy > 1582 || (gy === 1582 && (gm > 10 || (gm === 10 && gd >= 15)))) {
+    jd = Math.floor((1461 * (gy + 4800 + Math.floor((gm - 14) / 12))) / 4) +
+      Math.floor((367 * (gm - 2 - 12 * Math.floor((gm - 14) / 12))) / 12) -
+      Math.floor((3 * Math.floor((gy + 4900 + Math.floor((gm - 14) / 12)) / 100)) / 4) + gd - 32075;
+  } else {
+    jd = 367 * gy - Math.floor((7 * (gy + 5001 + Math.floor((gm - 9) / 7))) / 4) +
+      Math.floor((275 * gm) / 9) + gd + 1729777;
+  }
+  let l = jd - 1948440 + 10632;
+  const n = Math.floor((l - 1) / 10631);
+  l = l - 10631 * n + 354;
+  const j = Math.floor((10985 - l) / 5316) * Math.floor((50 * l) / 17719) +
+    Math.floor(l / 5670) * Math.floor((43 * l) / 15238);
+  l = l - Math.floor((30 - j) / 15) * Math.floor((17719 * j) / 50) -
+    Math.floor(j / 16) * Math.floor((15238 * j) / 43) + 29;
+  const m = Math.floor((24 * l) / 709);
+  const d = l - Math.floor((709 * m) / 24);
+  return { y: 30 * n + j - 30, m, d };
+}
+const HIJRI_MONTHS = ["Muḥarram", "Ṣafar", "Rabīʿ al-Awwal", "Rabīʿ al-Thānī",
+  "Jumādā al-Ūlā", "Jumādā al-Thāniyah", "Rajab", "Shaʿbān", "Ramaḍān",
+  "Shawwāl", "Dhū al-Qaʿdah", "Dhū al-Ḥijjah"];
+
+/* ------------------------------ helpers ----------------------------------- */
+const fmtTime = (h) => {
+  if (h == null || isNaN(h)) return "—";
+  h = fixHour(h);
+  let m = Math.floor(h), mm = Math.round((h - m) * 60);
+  if (mm === 60) { mm = 0; m = (m + 1) % 24; }
+  return `${String(m).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+};
+const fmtDur = (mins) => {
+  mins = Math.max(0, Math.round(mins));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h === 0 ? `${m} min` : `${h}h ${String(m).padStart(2, "0")}m`;
+};
+const tzOffsetForDate = (y, m, d) => -new Date(y, m - 1, d, 12).getTimezoneOffset() / 60;
+const CITIES = [
+  { name: "Stockholm", lat: 59.3293, lng: 18.0686 }, { name: "Göteborg", lat: 57.7089, lng: 11.9746 },
+  { name: "Malmö", lat: 55.605, lng: 13.0038 }, { name: "London", lat: 51.5074, lng: -0.1278 },
+  { name: "Istanbul", lat: 41.0082, lng: 28.9784 }, { name: "Cairo", lat: 30.0444, lng: 31.2357 },
+  { name: "Makkah", lat: 21.4225, lng: 39.8262 }, { name: "Dubai", lat: 25.2048, lng: 55.2708 },
+  { name: "Karachi", lat: 24.8607, lng: 67.0011 }, { name: "New York", lat: 40.7128, lng: -74.006 },
+];
+
+/* ------------------------------ icons ------------------------------------- */
+const Ic = {
+  sun: (p) => (<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>),
+  moon: (p) => (<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>),
+  pin: (p) => (<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z" /><circle cx="12" cy="10" r="3" /></svg>),
+  info: (p) => (<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>),
+  bell: (p) => (<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /></svg>),
+  cal: (p) => (<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>),
+  chev: (p) => (<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M6 9l6 6 6-6" /></svg>),
+};
+
+/* --------------------------- the night dial ------------------------------- */
+/* Night drawn as an arc: Maghrib lower-left, midnight top, Fajr lower-right,
+   with an open gap at the bottom (so the two ends never touch). The Qibla
+   compass (Kaaba marker + needle) lives in the center of the same dial. */
+function NightDial({ night, nowFrac, qibla, heading, compassOn, onEnableCompass, onInfo }) {
+  const cx = 160, cy = 150, R = 116, innerR = 80, A0 = 130, SWEEP = 280;
+  const cD = (d) => Math.cos(dtr(d)), sD = (d) => Math.sin(dtr(d));
+  const ptN = (f, r) => { const a = A0 + SWEEP * f; return [cx + r * cD(a), cy + r * sD(a)]; };
+  const arcN = (f0, f1, r) => {
+    const [x0, y0] = ptN(f0, r), [x1, y1] = ptN(f1, r);
+    const large = (f1 - f0) * SWEEP > 180 ? 1 : 0;
+    return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
+  };
+  const cpt = (b, r) => { const a = 270 + (b - (compassOn && heading != null ? heading : 0)); return [cx + r * cD(a), cy + r * sD(a)]; };
+  const optFrac = 1 - (45 / 60) / night.nightLen;
+  const ticks = [1 / 6, 1 / 3, 1 / 2, 2 / 3, 5 / 6];
+  const [mx, my] = ptN(0, R + 15), [fx, fy] = ptN(1, R + 15);
+  const kb = cpt(qibla || 0, innerR);          // kaaba point
+  const ks = cpt(qibla || 0, 50);              // needle start
+  const nN = cpt(0, innerR + 1);               // north tick
+
+  return (
+    <svg viewBox="0 0 320 300" width="100%" style={{ display: "block" }}>
+      <defs>
+        <linearGradient id="ng" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0%" stopColor="var(--dusk)" />
+          <stop offset="50%" stopColor="var(--deepnight)" />
+          <stop offset="100%" stopColor="var(--dawn)" />
+        </linearGradient>
+      </defs>
+
+      {/* faint full night track */}
+      <path d={arcN(0, 1, R)} fill="none" stroke="var(--line)" strokeWidth="14" strokeLinecap="round" />
+      {/* night arc (dusk -> midnight -> dawn) */}
+      <path d={arcN(0, 1, R)} fill="none" stroke="url(#ng)" strokeWidth="7" strokeLinecap="round" />
+      {/* recommended: last third */}
+      <path d={arcN(2 / 3, 1, R)} fill="none" stroke="var(--indigo)" strokeWidth="11" strokeLinecap="round" opacity="0.92" />
+      {/* optimistic window */}
+      <path d={arcN(optFrac, 1, R - 13)} fill="none" stroke="var(--amber)" strokeWidth="5" strokeLinecap="round" />
+
+      {/* phase ticks */}
+      {ticks.map((f, i) => {
+        const [xo, yo] = ptN(f, R + 8), [xi, yi] = ptN(f, R - 8);
+        return <line key={i} x1={xi} y1={yi} x2={xo} y2={yo} stroke="var(--line-strong)" strokeWidth="1.1" />;
+      })}
+
+      {/* end caps */}
+      <circle cx={ptN(0, R)[0]} cy={ptN(0, R)[1]} r="6" fill="var(--bg-elev)" stroke="var(--dusk)" strokeWidth="2.5" />
+      <circle cx={ptN(1, R)[0]} cy={ptN(1, R)[1]} r="6" fill="var(--bg-elev)" stroke="var(--dawn)" strokeWidth="2.5" />
+
+      {/* now marker */}
+      {nowFrac != null && nowFrac >= 0 && nowFrac <= 1 && (
+        <g>
+          <circle cx={ptN(nowFrac, R)[0]} cy={ptN(nowFrac, R)[1]} r="8" fill="none" stroke="var(--ink)" strokeWidth="1.5" opacity="0.4" />
+          <circle cx={ptN(nowFrac, R)[0]} cy={ptN(nowFrac, R)[1]} r="4.5" fill="var(--ink)" />
+        </g>
+      )}
+
+      {/* end labels */}
+      <text x={mx} y={my} textAnchor="end" className="endLbl"><tspan x={mx} dy="0">Maghrib</tspan><tspan x={mx} dy="14" className="endTime">{fmtTime(night.maghrib)}</tspan></text>
+      <text x={fx} y={fy} textAnchor="start" className="endLbl"><tspan x={fx} dy="0">Fajr</tspan><tspan x={fx} dy="14" className="endTime">{fmtTime(night.fajr)}</tspan></text>
+
+      {/* ---- inner Qibla compass ---- */}
+      <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="var(--line)" strokeWidth="1" strokeDasharray="2 4" />
+      <text x={nN[0]} y={nN[1]} textAnchor="middle" dominantBaseline="middle" className="northLbl">N</text>
+      <line x1={ks[0]} y1={ks[1]} x2={kb[0]} y2={kb[1]} stroke="var(--amber)" strokeWidth="2" strokeLinecap="round" opacity="0.7" />
+      {/* kaaba marker (upright) */}
+      <g transform={`translate(${kb[0] - 7},${kb[1] - 8})`}>
+        <rect x="0" y="2.5" width="14" height="12" rx="1.2" fill="var(--ink)" />
+        <rect x="0" y="5.2" width="14" height="2.4" fill="var(--amber)" />
+        <rect x="0" y="2.5" width="14" height="12" rx="1.2" fill="none" stroke="var(--bg-elev)" strokeWidth="0.6" />
+      </g>
+      <circle cx={cx} cy={cy} r="2.5" fill="var(--muted)" />
+
+      {/* info button (SVG, top-right) */}
+      <g className="dialInfoG" onClick={(e) => { e.stopPropagation(); onInfo(); }} style={{ cursor: "pointer" }}>
+        <circle cx="304" cy="16" r="11" fill="var(--bg-elev)" stroke="var(--line)" />
+        <text x="304" y="16" textAnchor="middle" dominantBaseline="central" className="qMark">i</text>
+      </g>
+    </svg>
+  );
+}
+
+/* ------------------------------ popover ----------------------------------- */
+function InfoDot({ label, children, openId, setOpenId, id }) {
+  const open = openId === id;
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button className="infoBtn" aria-label={label} onClick={(e) => { e.stopPropagation(); setOpenId(open ? null : id); }}><Ic.info /></button>
+      {open && <span className="popover" onClick={(e) => e.stopPropagation()}>{children}</span>}
+    </span>
+  );
+}
+
+/* ================================ APP ===================================== */
+function QiyamPlanner() {
+  const [theme, setTheme] = useState("light");
+  const [now, setNow] = useState(new Date());
+  const [coords, setCoords] = useState(null);
+  const [label, setLabel] = useState("");
+  const [locState, setLocState] = useState("detecting");
+  const [selDate, setSelDate] = useState(null);
+  const [fajrAngle, setFajrAngle] = useState(18);
+  const [showAdv, setShowAdv] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  const [heading, setHeading] = useState(null);
+  const [compassOn, setCompassOn] = useState(false);
+  const [alarmMsg, setAlarmMsg] = useState("");
+  const [manualLat, setManualLat] = useState("");
+  const [manualLng, setManualLng] = useState("");
+
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => { const h = () => setOpenId(null); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, []);
+
+  useEffect(() => {
+    let done = false;
+    const useIP = () => {
+      fetch("https://ipapi.co/json/").then((r) => r.json()).then((j) => {
+        if (done) return;
+        if (j && j.latitude != null) {
+          setCoords({ lat: j.latitude, lng: j.longitude });
+          setLabel(j.city ? `${j.city}${j.country_name ? ", " + j.country_name : ""}` : "Approx. location");
+          setLocState("ok");
+        } else setLocState("manual");
+      }).catch(() => { if (!done) setLocState("manual"); });
+    };
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { if (done) return; done = true; setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLabel("Your location"); setLocState("ok"); },
+        () => useIP(), { timeout: 8000, maximumAge: 600000 });
+      setTimeout(() => { if (!coords && !done) useIP(); }, 9000);
+    } else useIP();
+    return () => { done = true; };
+    // eslint-disable-next-line
+  }, []);
+
+  const enableCompass = useCallback(() => {
+    const handler = (e) => {
+      let h = null;
+      if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+      else if (e.alpha != null) h = 360 - e.alpha;
+      if (h != null) setHeading(h);
+    };
+    const start = () => {
+      window.addEventListener("deviceorientationabsolute", handler, true);
+      window.addEventListener("deviceorientation", handler, true);
+      setCompassOn(true);
+    };
+    const DOE = typeof DeviceOrientationEvent !== "undefined" ? DeviceOrientationEvent : null;
+    if (DOE && typeof DOE.requestPermission === "function") {
+      DOE.requestPermission().then((s) => { if (s === "granted") start(); }).catch(() => {});
+    } else start();
+  }, []);
+
+  const view = useMemo(() => {
+    if (!coords) return null;
+    const { lat, lng } = coords;
+    const base = selDate || now;
+    const compute = (off) => {
+      const dd = new Date(base.getFullYear(), base.getMonth(), base.getDate() + off);
+      return computeNight(lat, lng, tzOffsetForDate, dd.getFullYear(), dd.getMonth() + 1, dd.getDate(), fajrAngle);
+    };
+    let dateUsed = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+    let n = compute(0);
+    if (!selDate && !n.polar) {
+      const hNow = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+      const y = compute(-1);
+      if (!y.polar && hNow < fixHour(y.fajr)) { n = y; dateUsed = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 1); }
+    }
+    return { n, dateUsed };
+  }, [coords, selDate, now, fajrAngle]);
+
+  const night = view && !view.n.polar ? view.n : null;
+
+  const live = useMemo(() => {
+    if (!night) return null;
+    const hNow = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+    let cur = hNow;
+    if (cur < night.maghrib - 0.001) cur += 24;
+    const frac = (cur - night.maghrib) / night.nightLen;
+    const events = [
+      { key: "Maghrib", t: night.maghrib }, { key: "Recommended", t: night.lastThird },
+      { key: "Optimistic", t: night.optimistic }, { key: "Fajr", t: night.fajr },
+    ];
+    let next = null;
+    for (const e of events) { if (cur < e.t - 0.0005) { next = e; break; } }
+    return { frac: frac >= 0 && frac <= 1 ? frac : null, next, cur };
+  }, [night, now]);
+
+  const qibla = coords ? qiblaBearing(coords.lat, coords.lng) : null;
+  const dispDate = view ? view.dateUsed : now;
+  const hij = gregToHijri(dispDate.getFullYear(), dispDate.getMonth() + 1, dispDate.getDate());
+
+  const planTahajjud = () => {
+    if (!night) return;
+    const d = view.dateUsed;
+    const oh = fixHour(night.optimistic), rollover = night.optimistic >= 24;
+    const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate() + (rollover ? 1 : 0), Math.floor(oh), Math.round((oh - Math.floor(oh)) * 60));
+    const end = new Date(dt.getTime() + 45 * 60000);
+    const pad = (x) => String(x).padStart(2, "0");
+    const f = (x) => `${x.getFullYear()}${pad(x.getMonth() + 1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//QiyamPlanner//EN", "BEGIN:VEVENT",
+      `DTSTART:${f(dt)}`, `DTEND:${f(end)}`, "SUMMARY:Tahajjud / Qiyam al-Layl",
+      "DESCRIPTION:Optimistic wake time (Fajr − 45 min). A personal practical method.",
+      "BEGIN:VALARM", "TRIGGER:PT0M", "ACTION:DISPLAY", "DESCRIPTION:Time for Qiyam al-Layl", "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+    try {
+      const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+      const a = document.createElement("a"); a.href = url; a.download = "tahajjud.ics";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setAlarmMsg(`Calendar reminder created for ${fmtTime(night.optimistic)}. If nothing downloaded, set a phone alarm for ${fmtTime(night.optimistic)}.`);
+    } catch { setAlarmMsg(`Set a phone alarm for ${fmtTime(night.optimistic)} to wake for Tahajjud.`); }
+  };
+
+  const vars = theme === "light" ? {
+    "--bg": "#F4F1E9", "--bg-elev": "#FBFAF4", "--ink": "#1C2030", "--muted": "#71748A",
+    "--line": "rgba(28,32,48,0.10)", "--line-strong": "rgba(28,32,48,0.28)",
+    "--indigo": "#2E3A66", "--indigo-soft": "rgba(46,58,102,0.10)",
+    "--amber": "#B07D3B", "--amber-soft": "rgba(176,125,59,0.13)",
+    "--dusk": "#8A6FA0", "--deepnight": "#2E3A66", "--dawn": "#D2A85A",
+    "--glow": "radial-gradient(120% 80% at 50% 115%, rgba(200,163,91,0.16), transparent 60%)",
+  } : {
+    "--bg": "#0E1320", "--bg-elev": "#161D2E", "--ink": "#ECE9DF", "--muted": "#8A90A6",
+    "--line": "rgba(236,233,223,0.10)", "--line-strong": "rgba(236,233,223,0.30)",
+    "--indigo": "#9AA9DE", "--indigo-soft": "rgba(154,169,222,0.12)",
+    "--amber": "#D9B477", "--amber-soft": "rgba(217,180,119,0.14)",
+    "--dusk": "#B58FCB", "--deepnight": "#6E78B4", "--dawn": "#D9B477",
+    "--glow": "radial-gradient(120% 90% at 50% -10%, rgba(154,169,222,0.14), transparent 60%)",
+  };
+
+  const Row = ({ name, time, accent, info }) => (
+    <div className="row">
+      <div className="rowL">
+        <span className="rowName" style={accent ? { color: `var(--${accent})` } : null}>{name}</span>
+        {info}
+      </div>
+      <span className="rowTime">{time}</span>
+    </div>
+  );
+
+  return (
+    <div style={vars} className="qp-root">
+      <style>{CSS}</style>
+      <div className="qp-wrap">
+        <header className="hdr">
+          <div>
+            <h1>Qiyām al-Layl</h1>
+            <p className="sub">Night-prayer planner</p>
+          </div>
+          <button className="iconBtn" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle theme">
+            {theme === "light" ? <Ic.moon /> : <Ic.sun />}
+          </button>
+        </header>
+
+        <div className="metaRow">
+          <span className="meta"><Ic.pin /> {label || (locState === "detecting" ? "Locating…" : "Set location")}</span>
+          <span className="meta"><Ic.cal /> {dispDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}<span className="hij"> · {hij.d} {HIJRI_MONTHS[hij.m - 1]}</span></span>
+        </div>
+
+        {locState === "detecting" && !coords && <div className="notice">Finding your location…</div>}
+        {view && view.n.polar && <div className="notice">No true night occurs here on this date (midnight sun / polar night). Try a date outside midsummer, or a location further south.</div>}
+
+        {night && (
+          <section className="clockBlock">
+            <div className="clockWrap">
+              <NightDial night={night} nowFrac={live ? live.frac : null} qibla={qibla}
+                heading={heading} compassOn={compassOn} onEnableCompass={enableCompass}
+                onInfo={() => setOpenId(openId === "dial" ? null : "dial")} />
+              <div className="clockCenter">
+                <div className="bigTime">{now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div>
+                {live && live.next ? <div className="countdown">{live.next.key} in <b>{fmtDur((live.next.t - live.cur) * 60)}</b></div>
+                  : <div className="countdown">night ended</div>}
+                {night.highLat && <div className="hlTag">white-night mode</div>}
+              </div>
+              <div className="clockCompass">
+                {compassOn
+                  ? <div className="qibLabel">🕋 Qibla · {qibla != null ? Math.round(qibla) : "—"}°{heading == null ? " · calibrating…" : ""}</div>
+                  : <button className="compassBtn" onClick={enableCompass}>🕋 Enable live compass</button>}
+                {!compassOn && qibla != null && <div className="qibSub">Qibla {Math.round(qibla)}° from North</div>}
+              </div>
+              {openId === "dial" && (
+                <div className="dialPop" onClick={(e) => e.stopPropagation()}>
+                  <b>Reading the dial</b><br />
+                  The arc is tonight — <b>Maghrib</b> (sunset, left) curving over midnight to <b>Fajr</b> (dawn, right).
+                  The indigo band is the <b>last third</b> (Recommended); the amber tip is the <b>Optimistic</b> window (Fajr − 45 min).
+                  The hollow ring marks <b>now</b>. In the center, the 🕋 and needle point to the <b>Qibla</b>.
+                </div>
+              )}
+            </div>
+            <div className="legend">
+              <span className="lg"><i style={{ background: "var(--indigo)" }} />Recommended · last third</span>
+              <span className="lg"><i style={{ background: "var(--amber)" }} />Optimistic · Fajr−45</span>
+              <span className="lg"><i className="dotNow" />Now</span>
+            </div>
+          </section>
+        )}
+
+        {night && (
+          <section className="times">
+            <Row name="Maghrib" time={fmtTime(night.maghrib)} />
+            <Row name="Recommended" accent="indigo" time={fmtTime(night.lastThird)}
+              info={<InfoDot id="rec" openId={openId} setOpenId={setOpenId} label="About recommended">
+                <b>The last third of the night.</b> The classically recommended window for Qiyām — the time the Prophet ﷺ described as most beloved for standing in prayer. Begins {fmtTime(night.lastThird)} and runs to Fajr.
+              </InfoDot>} />
+            <div className="optCard">
+              <div className="optHead">
+                <div>
+                  <div className="optTitle" style={{ color: "var(--amber)" }}>Optimistic
+                    <InfoDot id="opt" openId={openId} setOpenId={setOpenId} label="About optimistic">
+                      <b>A personal practical method — not a fiqh ruling.</b> Wake 45 minutes before Fajr, pray Tahajjud / Qiyām, then move straight into Fajr. In short-night regions like Sweden the full last third can be very demanding, so this offers an achievable window that still lands you in worship right before dawn.
+                    </InfoDot>
+                  </div>
+                  <div className="optSub">45 minutes before Fajr · personal method</div>
+                </div>
+                <div className="optTime" style={{ color: "var(--amber)" }}>{fmtTime(night.optimistic)}</div>
+              </div>
+              <button className="planBtn" onClick={planTahajjud}><Ic.bell /> Plan my Tahajjud</button>
+              {alarmMsg && <div className="alarmMsg">{alarmMsg}</div>}
+              <div className="disclaim">A personal practical method, not a fiqh ruling.</div>
+            </div>
+            <Row name="Fajr" time={fmtTime(night.fajr)} />
+            <div className="nlen">Night length · {fmtDur(night.nightLen * 60)}</div>
+          </section>
+        )}
+
+        <button className="advToggle" onClick={() => setShowAdv(!showAdv)}>Settings & location <Ic.chev style={{ transform: showAdv ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
+        {showAdv && (
+          <section className="adv">
+            <label className="advRow"><span>Plan a date</span>
+              <input type="date" className="inp" value={view ? `${view.dateUsed.getFullYear()}-${String(view.dateUsed.getMonth() + 1).padStart(2, "0")}-${String(view.dateUsed.getDate()).padStart(2, "0")}` : ""}
+                onChange={(e) => { if (!e.target.value) { setSelDate(null); return; } const [y, m, d] = e.target.value.split("-").map(Number); setSelDate(new Date(y, m - 1, d)); }} />
+            </label>
+            {selDate && <button className="ghostBtn" onClick={() => setSelDate(null)}>Back to tonight</button>}
+            <label className="advRow"><span>Fajr angle</span>
+              <select className="inp" value={fajrAngle} onChange={(e) => setFajrAngle(Number(e.target.value))}>
+                <option value={18}>18° (standard)</option><option value={17}>17°</option><option value={15}>15°</option><option value={19.5}>19.5°</option>
+              </select>
+            </label>
+            <label className="advRow"><span>City</span>
+              <select className="inp" defaultValue="" onChange={(e) => { const c = CITIES.find((x) => x.name === e.target.value); if (c) { setCoords({ lat: c.lat, lng: c.lng }); setLabel(c.name); setLocState("manual"); } }}>
+                <option value="" disabled>Choose…</option>{CITIES.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+            </label>
+            <div className="advRow"><span>Coordinates</span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input className="inp sm" placeholder="lat" value={manualLat} onChange={(e) => setManualLat(e.target.value)} />
+                <input className="inp sm" placeholder="lng" value={manualLng} onChange={(e) => setManualLng(e.target.value)} />
+                <button className="ghostBtn sm" onClick={() => { const la = parseFloat(manualLat), ln = parseFloat(manualLng); if (!isNaN(la) && !isNaN(ln)) { setCoords({ lat: la, lng: ln }); setLabel("Custom location"); setLocState("manual"); } }}>Set</button>
+              </div>
+            </div>
+            <p className="advNote">Night = Maghrib (sunset) → Fajr. Fajr uses an {fajrAngle}° depression; during high-latitude white nights it switches to an angle-based rule (tuned to ~13° in Sweden to track Islamiska Förbundet, 18° elsewhere). Hijri date is approximate.</p>
+          </section>
+        )}
+
+        <footer className="ft">Times are computed locally on your device. The “Optimistic” suggestion is a personal practical method offered as an aid — not a religious ruling.</footer>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- styles ----------------------------------- */
+const CSS = `
+.qp-root{ background:var(--bg); color:var(--ink); min-height:100%;
+  font-family:'Avenir Next','Avenir','Segoe UI','Helvetica Neue',Helvetica,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased; position:relative; }
+.qp-root::before{ content:""; position:absolute; inset:0; background:var(--glow); pointer-events:none; }
+.qp-wrap{ position:relative; max-width:460px; margin:0 auto; padding:26px 20px 40px;
+  display:flex; flex-direction:column; gap:18px; animation:fade .7s ease both; }
+@keyframes fade{ from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none} }
+.hdr{ display:flex; justify-content:space-between; align-items:flex-start; }
+.hdr h1{ font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;
+  font-weight:600; font-size:30px; letter-spacing:.3px; margin:0; line-height:1; }
+.sub{ margin:4px 0 0; color:var(--muted); font-size:12.5px; letter-spacing:.14em; text-transform:uppercase; }
+.iconBtn{ background:var(--bg-elev); color:var(--ink); border:1px solid var(--line);
+  width:38px; height:38px; border-radius:50%; display:grid; place-items:center; cursor:pointer; transition:transform .15s,border-color .15s; }
+.iconBtn:hover{ transform:translateY(-1px); border-color:var(--line-strong); }
+.metaRow{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:13px; }
+.meta{ display:inline-flex; align-items:center; gap:6px; }
+.hij{ color:var(--muted); opacity:.85; }
+.notice{ background:var(--bg-elev); border:1px solid var(--line); border-radius:14px; padding:14px 16px; font-size:13.5px; color:var(--muted); line-height:1.5; }
+
+.clockBlock{ padding:2px 0; }
+.clockWrap{ position:relative; width:100%; max-width:340px; margin:0 auto; }
+.clockCenter{ position:absolute; left:0; right:0; top:48%; transform:translateY(-50%);
+  display:flex; flex-direction:column; align-items:center; pointer-events:none; }
+.bigTime{ font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif; font-size:42px; font-weight:600; line-height:1; letter-spacing:1px; }
+.countdown{ margin-top:5px; font-size:12px; color:var(--muted); text-align:center; max-width:140px; }
+.countdown b{ color:var(--ink); font-weight:600; }
+.hlTag{ margin-top:7px; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber-soft); padding:2px 8px; border-radius:20px; background:var(--amber-soft); }
+.clockCompass{ position:absolute; left:0; right:0; bottom:7%; display:flex; flex-direction:column; align-items:center; gap:3px; }
+.compassBtn{ background:var(--bg-elev); border:1px solid var(--line-strong); color:var(--ink); border-radius:20px; padding:6px 13px; font-size:12px; cursor:pointer; transition:background .15s; font-family:inherit; }
+.compassBtn:hover{ background:var(--indigo-soft); }
+.qibLabel{ font-size:12.5px; color:var(--ink); font-weight:600; }
+.qibSub{ font-size:10.5px; color:var(--muted); }
+.endLbl{ fill:var(--muted); font-size:10.5px; letter-spacing:.06em; font-family:'Avenir Next',system-ui,sans-serif; }
+.endTime{ fill:var(--ink); font-size:12.5px; font-weight:600; }
+.northLbl{ fill:var(--muted); font-size:10px; font-weight:700; font-family:'Avenir Next',system-ui,sans-serif; }
+.qMark{ fill:var(--muted); font-size:12px; font-style:italic; font-family:Georgia,serif; }
+.dialPop{ position:absolute; top:34px; right:0; z-index:30; width:250px; background:var(--bg-elev); color:var(--ink);
+  border:1px solid var(--line-strong); border-radius:12px; padding:12px 13px; font-size:12px; line-height:1.55; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+.legend{ display:flex; justify-content:center; flex-wrap:wrap; gap:14px; margin-top:6px; }
+.lg{ display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
+.lg i{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+.lg .dotNow{ background:none; border:1.5px solid var(--ink); }
+
+.times{ display:flex; flex-direction:column; gap:2px; }
+.row{ display:flex; align-items:center; justify-content:space-between; padding:13px 4px; border-bottom:1px solid var(--line); }
+.rowL{ display:flex; align-items:center; gap:7px; }
+.rowName{ font-size:15px; }
+.rowTime{ font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif; font-size:22px; font-weight:600; letter-spacing:.5px; }
+.optCard{ background:var(--bg-elev); border:1px solid var(--amber-soft); border-radius:16px; padding:15px 16px; margin:8px 0; box-shadow:0 1px 0 var(--line); }
+.optHead{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.optTitle{ font-size:15px; font-weight:700; display:flex; align-items:center; gap:6px; }
+.optSub{ font-size:11.5px; color:var(--muted); margin-top:3px; }
+.optTime{ font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif; font-size:28px; font-weight:600; }
+.planBtn{ margin-top:13px; width:100%; border:none; cursor:pointer; border-radius:11px; background:var(--indigo); color:#fff; padding:11px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px; transition:transform .15s,opacity .15s; }
+.planBtn:hover{ transform:translateY(-1px); opacity:.94; }
+.alarmMsg{ margin-top:10px; font-size:12px; color:var(--muted); line-height:1.45; }
+.disclaim{ margin-top:10px; font-size:11px; color:var(--muted); font-style:italic; }
+.nlen{ text-align:center; color:var(--muted); font-size:12px; letter-spacing:.06em; text-transform:uppercase; margin-top:12px; }
+.infoBtn{ background:none; border:none; color:var(--muted); cursor:pointer; padding:2px; display:inline-flex; line-height:0; }
+.infoBtn:hover{ color:var(--ink); }
+.popover{ position:absolute; top:24px; left:-8px; z-index:20; width:240px; text-align:left; background:var(--bg-elev); color:var(--ink); border:1px solid var(--line-strong); border-radius:12px; padding:12px 13px; font-size:12.5px; line-height:1.5; font-weight:400; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+.ghostBtn{ background:none; border:1px solid var(--line-strong); color:var(--ink); border-radius:9px; padding:7px 12px; font-size:12.5px; cursor:pointer; transition:background .15s; font-family:inherit; }
+.ghostBtn:hover{ background:var(--indigo-soft); }
+.ghostBtn.sm{ padding:6px 10px; font-size:12px; }
+.advToggle{ background:none; border:none; color:var(--muted); cursor:pointer; font-size:13px; display:inline-flex; align-items:center; gap:6px; padding:4px 0; align-self:center; font-family:inherit; }
+.adv{ display:flex; flex-direction:column; gap:12px; background:var(--bg-elev); border:1px solid var(--line); border-radius:16px; padding:16px; }
+.advRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13.5px; }
+.inp{ background:var(--bg); color:var(--ink); border:1px solid var(--line-strong); border-radius:9px; padding:7px 9px; font-size:13px; font-family:inherit; }
+.inp.sm{ width:64px; }
+.advNote{ font-size:11.5px; color:var(--muted); line-height:1.55; margin:2px 0 0; }
+.ft{ text-align:center; font-size:11px; color:var(--muted); line-height:1.55; max-width:330px; margin:6px auto 0; }
+`;
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<QiyamPlanner />);
+</script>
+</body>
+</html>
