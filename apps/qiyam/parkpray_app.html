@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Park &amp; Pray</title>
+<meta name="description" content="Reserve a shared parking spot near the mosque in seconds and arrive in time for Salah. A community service." />
+<meta name="theme-color" content="#f7f4ef" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Park &amp; Pray" />
+<meta property="og:description" content="Reserve a shared parking spot near the mosque and arrive in time for Salah." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --background:36 33% 97%; --foreground:30 12% 14%;
+    --card:0 0% 100%; --muted:32 18% 94%; --muted-foreground:30 8% 42%;
+    --primary:150 18% 32%; --primary-foreground:36 33% 97%; --primary-soft:150 22% 92%;
+    --accent:28 45% 70%;
+    --available:150 35% 42%; --available-foreground:0 0% 100%;
+    --reserved:18 55% 55%; --reserved-foreground:0 0% 100%;
+    --border:30 10% 88%; --radius:0.75rem;
+    --shadow-soft:0 1px 2px hsl(30 12% 14% / .04), 0 4px 16px hsl(30 12% 14% / .04);
+    --shadow-card:0 1px 3px hsl(30 12% 14% / .06), 0 10px 30px hsl(30 12% 14% / .07);
+  }
+  *{box-sizing:border-box;border-color:hsl(var(--border))}
+  html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+  body{
+    margin:0;background:hsl(var(--background));color:hsl(var(--foreground));
+    font-family:'Inter',ui-sans-serif,system-ui,sans-serif;letter-spacing:-.01em;
+    font-feature-settings:"ss01","cv11";line-height:1.5;
+  }
+  h1,h2,h3{font-family:'Fraunces',Georgia,serif;letter-spacing:-.025em;margin:0;font-weight:500}
+  .display{font-family:'Fraunces',Georgia,serif}
+  .wrap{width:100%;max-width:560px;margin:0 auto;padding:0 18px}
+  a{color:inherit}
+  button{font-family:inherit;cursor:pointer}
+
+  /* Header */
+  header.bar{position:sticky;top:0;z-index:40;backdrop-filter:saturate(1.2) blur(8px);
+    background:hsl(var(--background)/.85);border-bottom:1px solid hsl(var(--border)/.6)}
+  .bar-in{height:58px;display:flex;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:9px;text-decoration:none}
+  .brand svg{height:34px;width:34px;flex:none}
+  .brand .name{font-family:'Fraunces',serif;font-size:18px;line-height:1}
+  .home-link{font-size:12.5px;color:hsl(var(--muted-foreground));text-decoration:none;
+    display:inline-flex;align-items:center;gap:5px;padding:6px 10px;border-radius:999px;
+    border:1px solid hsl(var(--border));white-space:nowrap}
+  .home-link:hover{color:hsl(var(--foreground));background:hsl(var(--muted))}
+
+  /* Hero — kept tight so the spot + button sit above the fold on mobile */
+  .hero{padding:22px 0 8px}
+  .eyebrow{font-size:11.5px;text-transform:uppercase;letter-spacing:.18em;color:hsl(var(--muted-foreground));margin:0 0 10px}
+  .hero h1{font-size:clamp(26px,7.4vw,34px);line-height:1.08;max-width:18ch}
+  .hero h1 .accent{color:hsl(var(--primary))}
+  .pill{margin-top:14px;display:inline-flex;align-items:center;gap:9px;padding:7px 13px;border-radius:999px;
+    background:hsl(var(--primary-soft));color:hsl(var(--primary));font-size:13px;font-weight:500}
+  .dot{height:8px;width:8px;border-radius:999px;background:hsl(var(--available));position:relative}
+  .dot::after{content:"";position:absolute;inset:-4px;border-radius:999px;background:hsl(var(--available)/.35);animation:ping 1.8s cubic-bezier(0,0,.2,1) infinite}
+  @keyframes ping{0%{transform:scale(.6);opacity:.7}80%,100%{transform:scale(2);opacity:0}}
+
+  /* Slots */
+  .slots{padding:18px 0 6px;display:grid;gap:14px}
+  .card{background:hsl(var(--card));border:1px solid hsl(var(--border)/.7);border-radius:var(--radius);
+    box-shadow:var(--shadow-soft);padding:18px;transition:box-shadow .2s}
+  .card:hover{box-shadow:var(--shadow-card)}
+  .card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .card h3{font-size:20px}
+  .owner{display:flex;align-items:center;gap:6px;color:hsl(var(--muted-foreground));font-size:13.5px;margin-top:5px}
+  .note{color:hsl(var(--muted-foreground));font-size:13.5px;margin:10px 0 0;line-height:1.45}
+  .badge{font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;white-space:nowrap;flex:none}
+  .badge.available{background:hsl(var(--available));color:hsl(var(--available-foreground))}
+  .badge.reserved{background:hsl(var(--reserved));color:hsl(var(--reserved-foreground))}
+  .held{display:flex;align-items:center;gap:7px;color:hsl(var(--muted-foreground));font-size:12.5px;margin-top:14px}
+  .count{font-variant-numeric:tabular-nums;color:hsl(var(--reserved));font-weight:600}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;border:none;
+    border-radius:calc(var(--radius) - 2px);padding:13px 16px;font-size:15px;font-weight:500;margin-top:14px;transition:opacity .15s,background .15s}
+  .btn-primary{background:hsl(var(--primary));color:hsl(var(--primary-foreground))}
+  .btn-primary:hover{opacity:.92}
+  .btn-outline{background:transparent;color:hsl(var(--foreground));border:1px solid hsl(var(--border))}
+  .btn-outline:hover{background:hsl(var(--muted))}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .demo-note{margin:14px 0 0;padding:11px 13px;border:1px dashed hsl(var(--border));border-radius:var(--radius);
+    background:hsl(var(--muted)/.5);color:hsl(var(--muted-foreground));font-size:12.5px;line-height:1.45}
+
+  /* Sections */
+  .section{padding:38px 0}
+  .section .eyebrow{margin-bottom:8px}
+  .section h2{font-size:clamp(22px,6vw,30px);line-height:1.1;max-width:20ch}
+  .lead{color:hsl(var(--muted-foreground));font-size:15.5px;line-height:1.6;margin:14px 0 0}
+  .steps{list-style:none;margin:26px 0 0;padding:0;display:grid;gap:22px}
+  .step{display:grid;grid-template-columns:auto 1fr;gap:16px}
+  .step .n{font-family:'Fraunces',serif;font-size:24px;color:hsl(var(--primary));font-variant-numeric:tabular-nums;line-height:1}
+  .step h3{font-size:17px;margin-bottom:4px}
+  .step p{margin:0;color:hsl(var(--muted-foreground));font-size:14px;line-height:1.55}
+  .callout{margin-top:26px;padding:18px;border-radius:var(--radius);background:hsl(var(--primary-soft))}
+  .callout h3{font-size:17px;margin-bottom:6px}
+  .callout p{margin:0;color:hsl(var(--foreground)/.8);font-size:13.5px;line-height:1.55}
+
+  .add-row{display:flex;justify-content:center;padding:6px 0 0}
+  .link-btn{background:none;border:none;color:hsl(var(--muted-foreground));font-size:13px;text-decoration:underline;text-underline-offset:3px;padding:8px}
+  .link-btn:hover{color:hsl(var(--foreground))}
+
+  footer{border-top:1px solid hsl(var(--border)/.6);margin-top:18px;padding:26px 0 40px;text-align:center}
+  footer .kib{font-family:'Fraunces',serif;font-size:15px}
+  footer .sub{color:hsl(var(--muted-foreground));font-size:12.5px;margin-top:8px}
+  footer a.back{color:hsl(var(--primary));text-decoration:none;font-weight:500}
+  footer a.back:hover{text-decoration:underline}
+
+  /* Modal / bottom sheet */
+  .overlay{position:fixed;inset:0;z-index:60;background:hsl(30 12% 14% / .4);display:none;
+    align-items:flex-end;justify-content:center;padding:0}
+  .overlay.open{display:flex}
+  @media(min-width:600px){.overlay{align-items:center;padding:20px}}
+  .sheet{background:hsl(var(--card));width:100%;max-width:480px;border-radius:18px 18px 0 0;
+    padding:22px 20px calc(22px + env(safe-area-inset-bottom));box-shadow:var(--shadow-card);
+    animation:rise .22s ease-out}
+  @media(min-width:600px){.sheet{border-radius:16px}}
+  @keyframes rise{from{transform:translateY(16px);opacity:.6}to{transform:translateY(0);opacity:1}}
+  .sheet h3{font-size:20px}
+  .sheet p.desc{color:hsl(var(--muted-foreground));font-size:13.5px;line-height:1.5;margin:8px 0 16px}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
+  .field input{width:100%;padding:12px 13px;border:1px solid hsl(var(--border));border-radius:calc(var(--radius) - 2px);
+    font-size:16px;font-family:inherit;background:hsl(var(--background))}
+  .field input:focus{outline:2px solid hsl(var(--primary)/.4);outline-offset:1px;border-color:hsl(var(--primary))}
+  .err{color:hsl(var(--reserved));font-size:13px;margin:2px 0 12px;min-height:0}
+  .sheet-actions{display:flex;gap:10px;margin-top:6px}
+  .sheet-actions .btn{margin-top:0}
+  .manage-list{margin-top:14px;display:grid;gap:8px}
+  .manage-item{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:10px 12px;border:1px solid hsl(var(--border));border-radius:calc(var(--radius) - 2px);font-size:14px}
+  .manage-item button{background:none;border:none;color:hsl(var(--reserved));font-size:13px;text-decoration:underline}
+  .reveal{fill:none}
+
+  .fade{opacity:0;transform:translateY(10px);animation:fade .6s ease forwards}
+  .fade.d1{animation-delay:.05s}.fade.d2{animation-delay:.12s}.fade.d3{animation-delay:.2s}
+  @keyframes fade{to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.fade{animation:none;opacity:1;transform:none}.dot::after{animation:none}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="#top" aria-label="Park and Pray">
+      <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="2" y="2" width="36" height="36" rx="10" fill="hsl(150 18% 32%)"/>
+        <path d="M11 13 Q20 6 29 13" stroke="hsl(36 33% 97%)" stroke-width="1.6" stroke-linecap="round" class="reveal" opacity=".85"/>
+        <path d="M15 14.5 V29 M15 14.5 H22 a4.2 4.2 0 0 1 0 8.4 H15" stroke="hsl(36 33% 97%)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="reveal"/>
+      </svg>
+      <span class="name">Park &amp; Pray</span>
+    </a>
+    <a class="home-link" href="https://www.02Barakah.com" target="_blank" rel="noopener">02Barakah ↗</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero wrap">
+    <p class="eyebrow fade">A community service</p>
+    <h1 class="fade d1">Reserve a parking spot.<br><span class="accent">Arrive in time for Salah.</span></h1>
+    <span class="pill fade d2"><span class="dot"></span><span id="avail">Loading spots…</span></span>
+  </section>
+
+  <section class="slots wrap fade d3" id="slots" aria-live="polite">
+    <!-- slot cards render here -->
+  </section>
+
+  <div class="add-row wrap">
+    <button class="link-btn" id="manageBtn">+ Add or manage spots</button>
+  </div>
+
+  <section class="section wrap" id="how">
+    <p class="eyebrow">How it works</p>
+    <h2>A simple way to share parking around prayer time.</h2>
+    <p class="lead">Park &amp; Pray is a small, community-run pool of parking spots near the mosque. Neighbours share the use of their spot, and worshippers can hold one for the length of a prayer.</p>
+    <ol class="steps">
+      <li class="step"><span class="n">01</span><div><h3>Check availability</h3><p>Open this page on your way to the mosque and see instantly which shared spots are free.</p></div></li>
+      <li class="step"><span class="n">02</span><div><h3>Reserve in one tap</h3><p>Pick a spot, enter your name and phone, and it's held in your name for up to 60 minutes.</p></div></li>
+      <li class="step"><span class="n">03</span><div><h3>Park and pray</h3><p>Drive straight there without circling the block. Arrive calm, not late.</p></div></li>
+      <li class="step"><span class="n">04</span><div><h3>It releases itself</h3><p>Your hold expires automatically after 60 minutes — or release it the moment you leave for the next brother or sister.</p></div></li>
+    </ol>
+    <div class="callout">
+      <h3>A note on trust</h3>
+      <p>Please respect the owner's spot — keep it clean, don't block driveways, and release your reservation as soon as you leave. This service runs entirely on trust and good intentions.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p class="kib">Keep in Prayers 🙏 · Usman Afzal</p>
+  <p class="sub">Part of <a class="back" href="https://www.02Barakah.com" target="_blank" rel="noopener">www.02Barakah.com</a> · <span id="year"></span></p>
+</footer>
+
+<!-- Reserve sheet -->
+<div class="overlay" id="reserveOverlay" role="dialog" aria-modal="true" aria-labelledby="reserveTitle">
+  <div class="sheet">
+    <h3 id="reserveTitle">Reserve a spot</h3>
+    <p class="desc">You're holding this spot for 60 minutes. Please release it after Salah so others can use it.</p>
+    <div class="field"><label for="rName">Your name</label><input id="rName" type="text" autocomplete="name" placeholder="e.g. Ahmed" /></div>
+    <div class="field"><label for="rPhone">Phone number</label><input id="rPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="e.g. 070 123 45 67" /></div>
+    <p class="err" id="reserveErr"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-outline" data-close>Cancel</button>
+      <button class="btn btn-primary" id="reserveConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Release sheet -->
+<div class="overlay" id="releaseOverlay" role="dialog" aria-modal="true" aria-labelledby="releaseTitle">
+  <div class="sheet">
+    <h3 id="releaseTitle">Release this spot</h3>
+    <p class="desc">Enter the phone number you used to reserve it. (Admins can use the admin key instead.)</p>
+    <div class="field"><label for="relPhone">Phone number used to reserve</label><input id="relPhone" type="tel" inputmode="tel" placeholder="Your phone number" /></div>
+    <div class="field"><label for="relAdmin">Admin key (optional)</label><input id="relAdmin" type="password" placeholder="Only if you're the admin" /></div>
+    <p class="err" id="releaseErr"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-outline" data-close>Cancel</button>
+      <button class="btn btn-primary" id="releaseConfirm">Release</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manage sheet -->
+<div class="overlay" id="manageOverlay" role="dialog" aria-modal="true" aria-labelledby="manageTitle">
+  <div class="sheet">
+    <h3 id="manageTitle">Add a spot</h3>
+    <p class="desc">For the admin only. Enter your admin key, then add a new shared parking spot.</p>
+    <div class="field"><label for="mKey">Admin key</label><input id="mKey" type="password" placeholder="Your admin key" /></div>
+    <div class="field"><label for="mLabel">Spot name</label><input id="mLabel" type="text" placeholder="e.g. Spot 2 / Driveway on Mosque Rd" /></div>
+    <div class="field"><label for="mOwner">Owner name</label><input id="mOwner" type="text" placeholder="Who is sharing it" /></div>
+    <div class="field"><label for="mNote">Short note (optional)</label><input id="mNote" type="text" placeholder="e.g. Behind the blue gate" /></div>
+    <p class="err" id="manageErr"></p>
+    <div class="sheet-actions">
+      <button class="btn btn-outline" data-close>Close</button>
+      <button class="btn btn-primary" id="manageConfirm">Add spot</button>
+    </div>
+    <div class="manage-list" id="manageList"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  var API = "/api/slots";
+  var DEMO_KEY = "pnp_demo_slots";
+  var HOLD_MS = 60*60*1000;
+  var demo = false;          // becomes true if the live API can't be reached
+  var slots = [];
+  var pendingReserveId = null, pendingReleaseId = null;
+
+  /* ---------- demo fallback (so the page works before KV is wired up) ---------- */
+  function demoLoad(){
+    var raw = null;
+    try { raw = localStorage.getItem(DEMO_KEY); } catch(e){}
+    var arr;
+    if(!raw){
+      arr=[{id:"demo-1",label:"Spot 1",owner:"Usman Afzal",note:"A private spot, kindly shared for prayer times.",reservedName:null,reservedPhone:null,reservedUntil:null}];
+      demoSave(arr);
+    } else { arr=JSON.parse(raw); }
+    var now=Date.now(),changed=false;
+    arr.forEach(function(s){ if(s.reservedUntil&&s.reservedUntil<=now){s.reservedName=s.reservedPhone=s.reservedUntil=null;changed=true;} });
+    if(changed) demoSave(arr);
+    return arr;
+  }
+  function demoSave(arr){ try{ localStorage.setItem(DEMO_KEY, JSON.stringify(arr)); }catch(e){} }
+  function demoPublic(arr){
+    var now=Date.now();
+    return arr.map(function(s){
+      var r=s.reservedUntil&&s.reservedUntil>now;
+      return {id:s.id,label:s.label,owner:s.owner,note:s.note,status:r?"reserved":"available",reservedName:r?s.reservedName:null,reservedUntil:r?s.reservedUntil:null};
+    });
+  }
+  function demoAction(body){
+    var arr=demoLoad(), now=Date.now(), s;
+    if(body.action==="reserve"){
+      if(!body.name||!body.phone) throw new Error("Please enter your name and phone number.");
+      s=arr.find(function(x){return x.id===body.id}); if(!s) throw new Error("That spot no longer exists.");
+      if(s.reservedUntil&&s.reservedUntil>now) throw new Error("Sorry — that spot was just taken.");
+      s.reservedName=body.name.trim();s.reservedPhone=body.phone.trim();s.reservedUntil=now+HOLD_MS;
+    } else if(body.action==="release"){
+      s=arr.find(function(x){return x.id===body.id}); if(!s) throw new Error("That spot no longer exists.");
+      var ok=(body.adminKey&&body.adminKey==="demo")||(body.phone&&s.reservedPhone&&body.phone.trim()===s.reservedPhone);
+      if(!ok) throw new Error("To release, enter the phone number used to reserve it.");
+      s.reservedName=s.reservedPhone=s.reservedUntil=null;
+    } else if(body.action==="add"){
+      if(body.adminKey!=="demo") throw new Error("Demo mode: the admin key here is the word  demo");
+      if(!body.label) throw new Error("Please give the spot a name.");
+      arr.push({id:"demo-"+Date.now(),label:body.label.trim(),owner:body.owner?body.owner.trim():"Community",note:body.note?body.note.trim():null,reservedName:null,reservedPhone:null,reservedUntil:null});
+    } else if(body.action==="remove"){
+      if(body.adminKey!=="demo") throw new Error("Demo mode: the admin key here is the word  demo");
+      arr=arr.filter(function(x){return x.id!==body.id});
+    }
+    demoSave(arr);
+    return {slots:demoPublic(arr)};
+  }
+
+  /* ---------- API layer (live, with demo fallback) ---------- */
+  function call(method, body){
+    if(demo){ return Promise.resolve(method==="GET"?{slots:demoPublic(demoLoad())}:demoAction(body)); }
+    var opts={method:method};
+    if(body){ opts.headers={"content-type":"application/json"}; opts.body=JSON.stringify(body); }
+    return fetch(API,opts).then(function(res){
+      return res.json().catch(function(){return {};}).then(function(data){
+        if(!res.ok) throw new Error(data.error||("Request failed ("+res.status+")"));
+        return data;
+      });
+    }).catch(function(err){
+      // Connection failure → switch to demo mode so the UI still works for preview.
+      if(err instanceof TypeError){
+        demo=true;
+        return method==="GET"?{slots:demoPublic(demoLoad())}:demoAction(body);
+      }
+      throw err;
+    });
+  }
+
+  /* ---------- rendering ---------- */
+  function fmtTime(ms){ return new Date(ms).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+  function remaining(ms){
+    var d=Math.max(0,ms-Date.now()), m=Math.floor(d/60000), s=Math.floor((d%60000)/1000);
+    return m+":"+(s<10?"0":"")+s;
+  }
+  function esc(t){ var d=document.createElement("div"); d.textContent=t==null?"":t; return d.innerHTML; }
+
+  function render(){
+    var box=document.getElementById("slots");
+    var avail=slots.filter(function(s){return s.status==="available";}).length;
+    var availEl=document.getElementById("avail");
+    availEl.textContent=avail+" of "+slots.length+" spots available right now";
+    var dot=document.querySelector(".dot");
+    if(dot) dot.style.background = avail>0 ? "hsl(var(--available))" : "hsl(var(--reserved))";
+
+    box.innerHTML = slots.map(function(s){
+      var reserved = s.status==="reserved";
+      var action = reserved
+        ? '<div class="held">⏱ Held by '+esc(s.reservedName||"someone")+' · until '+fmtTime(s.reservedUntil)+
+          ' <span class="count" data-until="'+s.reservedUntil+'"></span></div>'+
+          '<button class="btn btn-outline" data-release="'+s.id+'">Release this spot</button>'
+        : '<button class="btn btn-primary" data-reserve="'+s.id+'">Reserve for 60 min</button>';
+      return ''+
+        '<article class="card">'+
+          '<div class="card-top">'+
+            '<div><h3>'+esc(s.label)+'</h3>'+
+              '<div class="owner">👤 '+esc(s.owner)+'</div></div>'+
+            '<span class="badge '+(reserved?"reserved":"available")+'">'+(reserved?"Reserved":"Available")+'</span>'+
+          '</div>'+
+          (s.note?'<p class="note">'+esc(s.note)+'</p>':'')+
+          action+
+        '</article>';
+    }).join("");
+
+    if(demo && !document.getElementById("demoNote")){
+      var n=document.createElement("p"); n.id="demoNote"; n.className="demo-note";
+      n.innerHTML="⚙️ <strong>Preview mode</strong> — not connected to the live store yet, so reservations are only saved on this device. Once deployed on Cloudflare with the KV namespace bound, everyone will share the same live data. (Here the admin key is the word <strong>demo</strong>.)";
+      box.parentNode.insertBefore(n, box.nextSibling);
+    }
+    tick();
+  }
+
+  function tick(){
+    document.querySelectorAll(".count").forEach(function(el){
+      var until=+el.getAttribute("data-until");
+      if(until>Date.now()) el.textContent="("+remaining(until)+" left)";
+      else el.textContent="(expiring…)";
+    });
+  }
+
+  /* ---------- loading / polling ---------- */
+  function load(){
+    return call("GET").then(function(d){ slots=d.slots||[]; render(); });
+  }
+
+  /* ---------- modals ---------- */
+  function openSheet(id){ document.getElementById(id).classList.add("open"); }
+  function closeSheet(id){ document.getElementById(id).classList.remove("open"); }
+  document.querySelectorAll("[data-close]").forEach(function(b){
+    b.addEventListener("click", function(){ this.closest(".overlay").classList.remove("open"); });
+  });
+  document.querySelectorAll(".overlay").forEach(function(o){
+    o.addEventListener("click", function(e){ if(e.target===o) o.classList.remove("open"); });
+  });
+
+  // event delegation for reserve / release buttons
+  document.getElementById("slots").addEventListener("click", function(e){
+    var r=e.target.closest("[data-reserve]"), rel=e.target.closest("[data-release]");
+    if(r){ pendingReserveId=r.getAttribute("data-reserve");
+      document.getElementById("rName").value=""; document.getElementById("rPhone").value="";
+      document.getElementById("reserveErr").textContent=""; openSheet("reserveOverlay");
+      setTimeout(function(){document.getElementById("rName").focus();},120);
+    }
+    if(rel){ pendingReleaseId=rel.getAttribute("data-release");
+      document.getElementById("relPhone").value=""; document.getElementById("relAdmin").value="";
+      document.getElementById("releaseErr").textContent=""; openSheet("releaseOverlay");
+    }
+  });
+
+  function busy(btn,on,label){ btn.disabled=on; btn.textContent=on?"Please wait…":label; }
+
+  document.getElementById("reserveConfirm").addEventListener("click", function(){
+    var btn=this, name=document.getElementById("rName").value, phone=document.getElementById("rPhone").value;
+    var err=document.getElementById("reserveErr"); err.textContent="";
+    if(!name.trim()||!phone.trim()){ err.textContent="Please enter your name and phone number."; return; }
+    busy(btn,true,"Confirm");
+    call("POST",{action:"reserve",id:pendingReserveId,name:name,phone:phone}).then(function(d){
+      slots=d.slots; render(); closeSheet("reserveOverlay");
+    }).catch(function(e){ err.textContent=e.message; }).finally(function(){ busy(btn,false,"Confirm"); });
+  });
+
+  document.getElementById("releaseConfirm").addEventListener("click", function(){
+    var btn=this, phone=document.getElementById("relPhone").value, key=document.getElementById("relAdmin").value;
+    var err=document.getElementById("releaseErr"); err.textContent="";
+    busy(btn,true,"Release");
+    call("POST",{action:"release",id:pendingReleaseId,phone:phone,adminKey:key}).then(function(d){
+      slots=d.slots; render(); closeSheet("releaseOverlay");
+    }).catch(function(e){ err.textContent=e.message; }).finally(function(){ busy(btn,false,"Release"); });
+  });
+
+  // Manage / add
+  document.getElementById("manageBtn").addEventListener("click", function(){
+    document.getElementById("manageErr").textContent=""; renderManageList(); openSheet("manageOverlay");
+  });
+  function renderManageList(){
+    var el=document.getElementById("manageList");
+    el.innerHTML = slots.map(function(s){
+      return '<div class="manage-item"><span>'+esc(s.label)+'</span><button data-remove="'+s.id+'">Remove</button></div>';
+    }).join("");
+    el.querySelectorAll("[data-remove]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var key=document.getElementById("mKey").value, err=document.getElementById("manageErr"); err.textContent="";
+        if(!key){ err.textContent="Enter your admin key first (top field) to remove a spot."; return; }
+        call("POST",{action:"remove",id:this.getAttribute("data-remove"),adminKey:key}).then(function(d){
+          slots=d.slots; render(); renderManageList();
+        }).catch(function(e){ err.textContent=e.message; });
+      });
+    });
+  }
+  document.getElementById("manageConfirm").addEventListener("click", function(){
+    var btn=this;
+    var key=document.getElementById("mKey").value, label=document.getElementById("mLabel").value,
+        owner=document.getElementById("mOwner").value, note=document.getElementById("mNote").value;
+    var err=document.getElementById("manageErr"); err.textContent="";
+    if(!key){ err.textContent="Please enter your admin key."; return; }
+    if(!label.trim()){ err.textContent="Please give the spot a name."; return; }
+    busy(btn,true,"Add spot");
+    call("POST",{action:"add",label:label,owner:owner,note:note,adminKey:key}).then(function(d){
+      slots=d.slots; render(); renderManageList();
+      document.getElementById("mLabel").value=""; document.getElementById("mOwner").value=""; document.getElementById("mNote").value="";
+    }).catch(function(e){ err.textContent=e.message; }).finally(function(){ busy(btn,false,"Add spot"); });
+  });
+
+  // boot
+  load();
+  setInterval(load, 20000); // re-sync so everyone sees changes
+  setInterval(tick, 1000);  // live countdowns
+})();
+</script>
+</body>
+</html>
