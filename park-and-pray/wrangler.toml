@@ -1,0 +1,17 @@
+# Park & Pray — Cloudflare Pages config
+# This file lets Wrangler know your static assets live in this folder
+# and binds the KV namespace the function uses.
+
+name = "park-and-pray"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "."
+
+# KV binding the function reads/writes through (env.PARKING).
+# Replace the id below with YOUR namespace id from:  npx wrangler kv namespace create PARKING
+[[kv_namespaces]]
+binding = "PARKING"
+id = "PASTE_YOUR_KV_NAMESPACE_ID_HERE"
+
+# NOTE: ADMIN_KEY is a secret — do NOT put it here.
+# Set it in the dashboard (Settings → Variables and Secrets) or:
+#   npx wrangler pages secret put ADMIN_KEY
