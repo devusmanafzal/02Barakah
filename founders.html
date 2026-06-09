@@ -288,11 +288,8 @@
     }
     .nav-links a:hover{color:var(--ink)}
     .nav-links a.nav-cta{
-     button class="burger-btn" id="burgerBtn" aria-label="Toggle menu" aria-expanded="false">
-      <span></span><span></span><span></span>
-    </button>
-    <nav class="nav-links" id="navLding:12px 28px;margin:12px 28px 0;
-      border-top:1px solid var(--line);border-radius:0;
+     border:none;padding:12px 28px;margin:12px 28px 0;
+     border-top:1px solid var(--line);border-radius:0;
     }
     .founder-hero{padding:40px 0 0}
     .section{padding:60px 0}
@@ -309,7 +306,10 @@
 <header class="nav" id="nav">
   <div class="wrap nav-inner">
     <a class="brand" href="index.html"><span class="dot">.</span>Barakah</a>
-    <nav class="nav-links">
+     <button class="burger-btn" id="burgerBtn" aria-label="Toggle menu" aria-expanded="false">
+       <span></span><span></span><span></span>
+     </button>
+     <nav class="nav-links" id="navLinks">
       <a href="index.html#barakah">What is Barakah</a>
       <a href="index.html#projects">Apps</a>
       <a href="index.html#mission">About</a>

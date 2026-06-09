@@ -268,32 +268,29 @@
   @media (max-width:680px){
     body{font-size:16px}
     .wrap{padding:0 20px}
-    .burger-btn{display:flex}
-    .nav-links{
-      position:absolute;top:72px;left:0;right:0;
-      flex-direction:column;gap:0;background:rgba(246,243,238,0.95);
-      backdrop-filter:saturate(140%) blur(10px);
-      border-bottom:1px solid var(--line);
-      padding:16px 0;
-      max-height:0;overflow:hidden;transition:max-height .3s ease;
-    }
-    .nav-links.active{max-height:400px}
-    .nav-links a{
-      display:block;padding:12px 28px;font-size:15px;font-weight:500;
-      color:var(--muted);transition:color .2s ease;
-    }
-    .nav-links a:hover{color:var(--ink)}
-    .nav-links a.nav-cta{
-     button class="burger-btn" id="burgerBtn" aria-label="Toggle menu" aria-expanded="false">
-      <span></span><span></span><span></span>
-    </button>
-    <nav class="nav-links" id="navLding:12px 28px;margin:12px 28px 0;
-      border-top:1px solid var(--line);border-radius:0;
-    }
-    .hero{padding:34px 0 64px}
-    .section{padding:60px 0}
-    .proj-grid{grid-template-columns:1fr}
-    .hero-ctas .btn{flex:1;justify-content:center}
+     .burger-btn{display:flex}
+     .nav-links{
+       position:absolute;top:72px;left:0;right:0;
+       flex-direction:column;gap:0;background:rgba(246,243,238,0.95);
+       backdrop-filter:saturate(140%) blur(10px);
+       border-bottom:1px solid var(--line);
+       padding:16px 0;
+       max-height:0;overflow:hidden;transition:max-height .3s ease;
+     }
+     .nav-links.active{max-height:400px}
+     .nav-links a{
+       display:block;padding:12px 28px;font-size:15px;font-weight:500;
+       color:var(--muted);transition:color .2s ease;
+     }
+     .nav-links a:hover{color:var(--ink)}
+     .nav-links a.nav-cta{
+       border:none;padding:12px 28px;margin:12px 28px 0;
+       border-top:1px solid var(--line);border-radius:0;
+     }
+     .hero{padding:34px 0 64px}
+     .section{padding:60px 0}
+     .proj-grid{grid-template-columns:1fr}
+     .hero-ctas .btn{flex:1;justify-content:center}
   }
 </style>
 </head>
@@ -305,7 +302,10 @@
 <header class="nav" id="nav">
   <div class="wrap nav-inner">
     <a class="brand" href="#top"><span class="dot">.02</span>Barakah</a>
-    <nav class="nav-links">
+     <button class="burger-btn" id="burgerBtn" aria-label="Toggle menu" aria-expanded="false">
+       <span></span><span></span><span></span>
+     </button>
+     <nav class="nav-links" id="navLinks">
       <a href="#barakah">What is Barakah</a>
       <a href="#projects">Apps</a>
       <a href="#mission">About</a>
