@@ -201,13 +201,20 @@ function NightDial({ night, nowFrac, qibla, heading, compassOn, onEnableCompass,
   const cpt = (b, r) => { const a = 270 + (b - (compassOn && heading != null ? heading : 0)); return [cx + r * cD(a), cy + r * sD(a)]; };
   const optFrac = 1 - (45 / 60) / night.nightLen;
   const ticks = [1 / 6, 1 / 3, 1 / 2, 2 / 3, 5 / 6];
+  const tickLabels = [
+    { f: 1 / 6, label: "1st sixth" },
+    { f: 1 / 3, label: "1st third" },
+    { f: 1 / 2, label: "Midnight" },
+    { f: 2 / 3, label: "Last third" },
+    { f: 5 / 6, label: "Last sixth" },
+  ];
   const [mx, my] = ptN(0, R + 15), [fx, fy] = ptN(1, R + 15);
   const kb = cpt(qibla || 0, innerR);          // kaaba point
   const ks = cpt(qibla || 0, 50);              // needle start
   const nN = cpt(0, innerR + 1);               // north tick
 
   return (
-    <svg viewBox="0 0 320 300" width="100%" style={{ display: "block" }}>
+    <svg viewBox="-45 -25 410 345" width="100%" style={{ display: "block" }}>
       <defs>
         <linearGradient id="ng" x1="0" y1="1" x2="1" y2="0">
           <stop offset="0%" stopColor="var(--dusk)" />
@@ -229,6 +236,22 @@ function NightDial({ night, nowFrac, qibla, heading, compassOn, onEnableCompass,
       {ticks.map((f, i) => {
         const [xo, yo] = ptN(f, R + 8), [xi, yi] = ptN(f, R - 8);
         return <line key={i} x1={xi} y1={yi} x2={xo} y2={yo} stroke="var(--line-strong)" strokeWidth="1.1" />;
+      })}
+      {tickLabels.map(({ f, label }) => {
+        const [tx, ty] = ptN(f, R + 26);
+        const textAnchor = f < 0.5 ? "end" : f > 0.5 ? "start" : "middle";
+        return (
+          <text
+            key={label}
+            x={tx}
+            y={ty}
+            textAnchor={textAnchor}
+            dominantBaseline="middle"
+            className="phaseLbl"
+          >
+            {label}
+          </text>
+        );
       })}
 
       {/* end caps */}
@@ -257,7 +280,7 @@ function NightDial({ night, nowFrac, qibla, heading, compassOn, onEnableCompass,
         <rect x="0" y="5.2" width="14" height="2.4" fill="var(--amber)" />
         <rect x="0" y="2.5" width="14" height="12" rx="1.2" fill="none" stroke="var(--bg-elev)" strokeWidth="0.6" />
       </g>
-      <circle cx={cx} cy={cy} r="2.5" fill="var(--muted)" />
+
 
       {/* info button (SVG, top-right) */}
       <g className="dialInfoG" onClick={(e) => { e.stopPropagation(); onInfo(); }} style={{ cursor: "pointer" }}>
@@ -281,7 +304,7 @@ function InfoDot({ label, children, openId, setOpenId, id }) {
 
 /* ================================ APP ===================================== */
 function QiyamPlanner() {
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState("dark");
   const [now, setNow] = useState(new Date());
   const [coords, setCoords] = useState(null);
   const [label, setLabel] = useState("");
@@ -313,7 +336,17 @@ function QiyamPlanner() {
     };
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => { if (done) return; done = true; setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLabel("Your location"); setLocState("ok"); },
+        (pos) => {
+          if (done) return; done = true;
+          setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLabel("Your location");
+          setLocState("ok");
+          // Resolve a human-readable city name using the same IP API (GPS coords are used for calculations)
+          fetch("https://ipapi.co/json/")
+            .then((r) => r.json())
+            .then((j) => { if (j && j.city) setLabel(`${j.city}${j.country_name ? ", " + j.country_name : ""}`); })
+            .catch(() => {});
+        },
         () => useIP(), { timeout: 8000, maximumAge: 600000 });
       setTimeout(() => { if (!coords && !done) useIP(); }, 9000);
     } else useIP();
@@ -366,7 +399,7 @@ function QiyamPlanner() {
     if (cur < night.maghrib - 0.001) cur += 24;
     const frac = (cur - night.maghrib) / night.nightLen;
     const events = [
-      { key: "Maghrib", t: night.maghrib }, { key: "Recommended", t: night.lastThird },
+      { key: "Maghrib", t: night.maghrib }, { key: "Tahajud", t: night.lastThird },
       { key: "Optimistic", t: night.optimistic }, { key: "Fajr", t: night.fajr },
     ];
     let next = null;
@@ -444,6 +477,15 @@ function QiyamPlanner() {
           <span className="meta"><Ic.cal /> {dispDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}<span className="hij"> · {hij.d} {HIJRI_MONTHS[hij.m - 1]}</span></span>
         </div>
 
+        {night && night.highLat && (
+          <div className="wntRow">
+            <span className="hlTag" style={{ margin: 0 }}>white-night mode</span>
+            <InfoDot id="wnt" openId={openId} setOpenId={setOpenId} label="About white-night mode">
+              Your location experiences very short or no true astronomical night on this date. The app switches to an adjusted Fajr calculation — tuned to Islamiska Förbundet&apos;s schedule inside Sweden, and a practical estimate elsewhere. Prayer times may feel compressed; this mode ensures usable times are still shown.
+            </InfoDot>
+          </div>
+        )}
+
         {locState === "detecting" && !coords && <div className="notice">Finding your location…</div>}
         {view && view.n.polar && <div className="notice">No true night occurs here on this date (midnight sun / polar night). Try a date outside midsummer, or a location further south.</div>}
 
@@ -454,10 +496,9 @@ function QiyamPlanner() {
                 heading={heading} compassOn={compassOn} onEnableCompass={enableCompass}
                 onInfo={() => setOpenId(openId === "dial" ? null : "dial")} />
               <div className="clockCenter">
-                <div className="bigTime">{now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div>
+                <div className="bigTime">{now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false })}</div>
                 {live && live.next ? <div className="countdown">{live.next.key} in <b>{fmtDur((live.next.t - live.cur) * 60)}</b></div>
                   : <div className="countdown">night ended</div>}
-                {night.highLat && <div className="hlTag">white-night mode</div>}
               </div>
               <div className="clockCompass">
                 {compassOn
@@ -564,6 +605,7 @@ const CSS = `
 .iconBtn:hover{ transform:translateY(-1px); border-color:var(--line-strong); }
 .metaRow{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:13px; }
 .meta{ display:inline-flex; align-items:center; gap:6px; }
+.wntRow{ display:inline-flex; align-items:center; gap:6px; }
 .hij{ color:var(--muted); opacity:.85; }
 .notice{ background:var(--bg-elev); border:1px solid var(--line); border-radius:14px; padding:14px 16px; font-size:13.5px; color:var(--muted); line-height:1.5; }
 
@@ -576,12 +618,18 @@ const CSS = `
 .countdown b{ color:var(--ink); font-weight:600; }
 .hlTag{ margin-top:7px; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber-soft); padding:2px 8px; border-radius:20px; background:var(--amber-soft); }
 .clockCompass{ position:absolute; left:0; right:0; bottom:7%; display:flex; flex-direction:column; align-items:center; gap:3px; }
-.compassBtn{ background:var(--bg-elev); border:1px solid var(--line-strong); color:var(--ink); border-radius:20px; padding:6px 13px; font-size:12px; cursor:pointer; transition:background .15s; font-family:inherit; }
-.compassBtn:hover{ background:var(--indigo-soft); }
+.compassBtn{ background:var(--indigo); border:1px solid var(--indigo); color:#fff; border-radius:20px; padding:8px 16px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit; animation:compassPulse 2s ease-in-out infinite; box-shadow:0 0 0 0 rgba(154,169,222,0.55); }
+.compassBtn:hover{ animation:none; opacity:.9; }
+@keyframes compassPulse{
+  0%  { box-shadow:0 0 0 0   rgba(154,169,222,0.60); }
+  60% { box-shadow:0 0 0 10px rgba(154,169,222,0);   }
+  100%{ box-shadow:0 0 0 0   rgba(154,169,222,0);    }
+}
 .qibLabel{ font-size:12.5px; color:var(--ink); font-weight:600; }
 .qibSub{ font-size:10.5px; color:var(--muted); }
 .endLbl{ fill:var(--muted); font-size:10.5px; letter-spacing:.06em; font-family:'Avenir Next',system-ui,sans-serif; }
 .endTime{ fill:var(--ink); font-size:12.5px; font-weight:600; }
+.phaseLbl{ fill:var(--ink); font-size:9px; font-weight:600; font-family:'Avenir Next',system-ui,sans-serif; paint-order:stroke fill; stroke:var(--bg-elev); stroke-width:3px; }
 .northLbl{ fill:var(--muted); font-size:10px; font-weight:700; font-family:'Avenir Next',system-ui,sans-serif; }
 .qMark{ fill:var(--muted); font-size:12px; font-style:italic; font-family:Georgia,serif; }
 .dialPop{ position:absolute; top:34px; right:0; z-index:30; width:250px; background:var(--bg-elev); color:var(--ink);

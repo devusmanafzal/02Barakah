@@ -185,6 +185,74 @@
   .mission-quote p{font-family:var(--display);font-size:23px;line-height:1.4;margin:0;letter-spacing:-.01em}
   .mission-quote .src{margin-top:18px;font-family:var(--body);font-size:14px;color:rgba(246,243,238,0.6);font-weight:500}
 
+  /* ---------- founders preview ---------- */
+  .founders-preview-grid{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:22px;
+    align-items:center;
+    max-width:860px;
+    margin:0 auto;
+  }
+  .founder-preview-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    padding:20px;
+    text-align:center;
+  }
+  .founder-preview-frame{
+    position:relative;
+    border-radius:calc(var(--radius) - 6px);
+    overflow:hidden;
+    margin-bottom:14px;
+  }
+  .founder-preview-frame img{
+    width:100%;
+    aspect-ratio:3/4;
+    object-fit:cover;
+    object-position:top center;
+    display:block;
+  }
+  .founder-preview-name{
+    font-family:var(--display);
+    font-size:24px;
+    font-weight:600;
+    letter-spacing:-.01em;
+    margin:0 0 4px;
+  }
+  .founder-preview-role{
+    font-size:14px;
+    font-weight:500;
+    color:var(--sage);
+    margin:0;
+  }
+  .founders-link-wrap{
+    display:flex;
+    justify-content:center;
+    margin-top:18px;
+  }
+  .founders-link{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    font-size:15px;
+    font-weight:600;
+    color:var(--gold-deep);
+    border:1px solid rgba(200,169,107,0.45);
+    background:rgba(251,248,242,0.8);
+    border-radius:999px;
+    padding:10px 16px;
+    white-space:nowrap;
+    transition:all .2s ease;
+  }
+  .founders-link:hover{
+    color:var(--ink);
+    border-color:var(--ink);
+    transform:translateY(-2px);
+  }
+
   /* ---------- projects ---------- */
   .proj-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
   .proj{
@@ -264,6 +332,7 @@
     .hero-visual svg{max-width:320px}
     .mission-grid{grid-template-columns:1fr;gap:34px}
     .feature-grid{grid-template-columns:1fr;gap:16px}
+    .founders-preview-grid{grid-template-columns:1fr;max-width:460px;margin:0 auto}
   }
   @media (max-width:680px){
     body{font-size:16px}
@@ -309,7 +378,7 @@
       <a href="#barakah">What is Barakah</a>
       <a href="#projects">Apps</a>
       <a href="#mission">About</a>
-      <a href="founders.html">Founders</a>
+        <a href="#founders">Founders</a>
       <a class="nav-cta" href="#projects">Explore</a>
     </nav>
   </div>
@@ -424,6 +493,35 @@
         <div class="ar-big">بركة</div>
         <p>Rooted in faith, open to everyone. The aim is simply benefit — more good, from less noise.</p>
         <div class="src">— The intention behind Zero2Barakah</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOUNDERS PREVIEW -->
+  <section class="section alt" id="founders">
+    <div class="wrap">
+      <div class="head-center reveal">
+        <div class="kicker">The people behind it</div>
+        <h2 class="head">Meet The Founders</h2>
+      </div>
+      <div class="founders-preview-grid reveal">
+        <article class="founder-preview-card">
+          <div class="founder-preview-frame">
+            <img src="assests/founder-1.png" alt="Usman Afzal - Co-Founder of Zero2Barakah" />
+          </div>
+          <h3 class="founder-preview-name">Usman Afzal</h3>
+          <p class="founder-preview-role">Co-Founder, Zero2Barakah</p>
+        </article>
+        <article class="founder-preview-card">
+          <div class="founder-preview-frame">
+            <img src="assests/founder-2.png" alt="Maryam Usman - Co-Founder of Zero2Barakah" />
+          </div>
+          <h3 class="founder-preview-name">Maryam Usman</h3>
+          <p class="founder-preview-role">Co-Founder, Zero2Barakah</p>
+        </article>
+      </div>
+      <div class="founders-link-wrap reveal">
+        <a class="founders-link" href="founders.html">Read why we build this <span class="arr">→</span></a>
       </div>
     </div>
   </section>
