@@ -89,6 +89,19 @@
     transition:all .2s ease;
   }
   .nav-cta:hover{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  
+  /* burger menu */
+  .burger-btn{
+    display:none;flex-direction:column;gap:5px;background:none;border:none;cursor:pointer;
+    padding:8px;margin:-8px;
+  }
+  .burger-btn span{
+    width:24px;height:2.5px;background:var(--ink);border-radius:2px;
+    transition:all .3s ease;display:block;
+  }
+  .burger-btn.active span:nth-child(1){transform:rotate(45deg) translate(8px, 8px)}
+  .burger-btn.active span:nth-child(2){opacity:0}
+  .burger-btn.active span:nth-child(3){transform:rotate(-45deg) translate(7px, -7px)}
 
   /* ---------- buttons ---------- */
   .btn{
@@ -255,7 +268,28 @@
   @media (max-width:680px){
     body{font-size:16px}
     .wrap{padding:0 20px}
-    .nav-links a{display:none}
+    .burger-btn{display:flex}
+    .nav-links{
+      position:absolute;top:72px;left:0;right:0;
+      flex-direction:column;gap:0;background:rgba(246,243,238,0.95);
+      backdrop-filter:saturate(140%) blur(10px);
+      border-bottom:1px solid var(--line);
+      padding:16px 0;
+      max-height:0;overflow:hidden;transition:max-height .3s ease;
+    }
+    .nav-links.active{max-height:400px}
+    .nav-links a{
+      display:block;padding:12px 28px;font-size:15px;font-weight:500;
+      color:var(--muted);transition:color .2s ease;
+    }
+    .nav-links a:hover{color:var(--ink)}
+    .nav-links a.nav-cta{
+     button class="burger-btn" id="burgerBtn" aria-label="Toggle menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="nav-links" id="navLding:12px 28px;margin:12px 28px 0;
+      border-top:1px solid var(--line);border-radius:0;
+    }
     .hero{padding:34px 0 64px}
     .section{padding:60px 0}
     .proj-grid{grid-template-columns:1fr}
@@ -591,6 +625,28 @@
   }
 
   render();
+})();
+
+// Mobile menu toggle
+(function(){
+  const burgerBtn = document.getElementById('burgerBtn');
+  const navLinks = document.getElementById('navLinks');
+  if (!burgerBtn || !navLinks) return;
+
+  burgerBtn.addEventListener('click', function(){
+    burgerBtn.classList.toggle('active');
+    navLinks.classList.toggle('active');
+    burgerBtn.setAttribute('aria-expanded', burgerBtn.classList.contains('active'));
+  });
+
+  // Close menu when a link is clicked
+  Array.from(navLinks.querySelectorAll('a')).forEach(function(link){
+    link.addEventListener('click', function(){
+      burgerBtn.classList.remove('active');
+      navLinks.classList.remove('active');
+      burgerBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
 })();
 </script>
 </body>
