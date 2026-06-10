@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd /Users/usmanafzal/Documents/GitHub/02Barakah && python3 -c \"\nimport json, re\n\n# Read the file\nwith open\\('apps/qiyam/qiyam_appV2\\.html', 'r'\\) as f:\n    content = f\\.read\\(\\)\n\n# Check if the file is well-formed \\(look for key markers\\)\nmarkers = \\['computeNight', 'NightDial', 'QiyamV2', 'ReactDOM\\.createRoot', 'BottomSheet'\\]\nfor m in markers:\n    count = content\\.count\\(m\\)\n    print\\(f'\\{m\\}: \\{count\\} occurrences'\\)\n\nprint\\('Total lines:', content\\.count\\(chr\\(10\\)\\)\\)\n\"\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

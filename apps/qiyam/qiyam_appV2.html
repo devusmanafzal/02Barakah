@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#080C18" />
+<title>Qiyam al-Layl</title>
+<style>
+  html,body{height:100%;margin:0;background:#080C18}
+  #root{min-height:100%}
+  #root:empty::after{content:"Loading…";display:block;text-align:center;padding:40px;color:#8A90A6;font-family:system-ui,sans-serif}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* ============================================================================
+   Qiyam al-Layl V2 — Rich Night Dial
+   Solar math identical to V1. UI redesigned for a dominant, visually rich
+   phone-first dial. Prayer times + planner are behind a bottom sheet.
+   ========================================================================== */
+
+/* ----------------------------- solar math --------------------------------- */
+const dtr = (d) => (d * Math.PI) / 180;
+const rtd = (r) => (r * 180) / Math.PI;
+const sin = (d) => Math.sin(dtr(d));
+const cos = (d) => Math.cos(dtr(d));
+const arcsin = (x) => rtd(Math.asin(x));
+const arccos = (x) => rtd(Math.acos(x));
+const arctan2 = (y, x) => rtd(Math.atan2(y, x));
+const fixAngle = (a) => { a = a - 360 * Math.floor(a / 360); return a < 0 ? a + 360 : a; };
+const fixHour = (a) => { a = a - 24 * Math.floor(a / 24); return a < 0 ? a + 24 : a; };
+
+function julian(y, m, d) {
+  if (m <= 2) { y -= 1; m += 12; }
+  const A = Math.floor(y / 100);
+  const B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5;
+}
+function sunPosition(jd) {
+  const D = jd - 2451545.0;
+  const g = fixAngle(357.529 + 0.98560028 * D);
+  const q = fixAngle(280.459 + 0.98564736 * D);
+  const L = fixAngle(q + 1.915 * sin(g) + 0.02 * sin(2 * g));
+  const e = 23.439 - 0.00000036 * D;
+  const RA = arctan2(cos(e) * sin(L), cos(L)) / 15;
+  const decl = arcsin(sin(e) * sin(L));
+  const EqT = q / 15 - fixHour(RA);
+  return { decl, EqT };
+}
+function makeDay(lat, lng, tz, y, m, d) {
+  const jDate = julian(y, m, d) - lng / (15 * 24);
+  const midDay = (t) => { const eqt = sunPosition(jDate + t).EqT; return fixHour(12 - eqt); };
+  const sunAngleTime = (angle, t, dir) => {
+    const decl = sunPosition(jDate + t).decl;
+    const noon = midDay(t);
+    const x = (-sin(angle) - sin(decl) * sin(lat)) / (cos(decl) * cos(lat));
+    if (x < -1 || x > 1) return NaN;
+    const T = (1 / 15) * arccos(x);
+    return noon + (dir === "ccw" ? -T : T);
+  };
+  const adj = (t) => (isNaN(t) ? NaN : t + tz - lng / 15);
+  return { sunrise: adj(sunAngleTime(0.833, 6 / 24, "ccw")), sunset: adj(sunAngleTime(0.833, 18 / 24)) };
+}
+function isInSweden(lat, lng) { return lat >= 55.0 && lat <= 69.1 && lng >= 10.9 && lng <= 24.2; }
+function computeNight(lat, lng, tzForDate, y, m, d, fajrAngle) {
+  const tz0 = tzForDate(y, m, d);
+  const today = makeDay(lat, lng, tz0, y, m, d);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const ny = next.getUTCFullYear(), nm = next.getUTCMonth() + 1, nd = next.getUTCDate();
+  const tz1 = tzForDate(ny, nm, nd);
+  const tomorrow = makeDay(lat, lng, tz1, ny, nm, nd);
+  const sunset = today.sunset, sunriseNext = tomorrow.sunrise;
+  if (isNaN(sunset) || isNaN(sunriseNext)) return { polar: true };
+  const maghrib = sunset, sunriseAbs = sunriseNext + 24, nightAstro = sunriseAbs - maghrib;
+  const jD = julian(ny, nm, nd) - lng / (15 * 24);
+  const decl = sunPosition(jD + 5 / 24).decl;
+  const midday = fixHour(12 - sunPosition(jD + 5 / 24).EqT);
+  const xx = (-sin(fajrAngle) - sin(decl) * sin(lat)) / (cos(decl) * cos(lat));
+  let fajr, highLat = false;
+  if (xx >= -1 && xx <= 1) {
+    const T = (1 / 15) * arccos(xx);
+    fajr = (midday - T) + tz1 - lng / 15 + 24;
+    if (fajr >= sunriseAbs) highLat = true;
+  } else highLat = true;
+  if (highLat) { const tunedAngle = isInSweden(lat, lng) ? 13 : fajrAngle; fajr = sunriseAbs - (tunedAngle / 60) * nightAstro; }
+  const nightLen = fajr - maghrib, phase = (f) => maghrib + nightLen * f;
+  return {
+    polar: false, highLat, maghrib, fajr, sunriseAbs, nightLen,
+    sixth1: phase(1/6), third1: phase(1/3), half: phase(1/2),
+    lastThird: phase(2/3), lastSixth: phase(5/6), optimistic: fajr - 45/60,
+  };
+}
+function qiblaBearing(lat, lng) {
+  const KLAT = 21.4225, KLNG = 39.8262, dL = KLNG - lng;
+  const y = sin(dL) * cos(KLAT), x = cos(lat) * sin(KLAT) - sin(lat) * cos(KLAT) * cos(dL);
+  return (arctan2(y, x) + 360) % 360;
+}
+function gregToHijri(gy, gm, gd) {
+  let jd;
+  if (gy > 1582 || (gy === 1582 && (gm > 10 || (gm === 10 && gd >= 15)))) {
+    jd = Math.floor((1461*(gy+4800+Math.floor((gm-14)/12)))/4)+Math.floor((367*(gm-2-12*Math.floor((gm-14)/12)))/12)-Math.floor((3*Math.floor((gy+4900+Math.floor((gm-14)/12))/100))/4)+gd-32075;
+  } else { jd = 367*gy-Math.floor((7*(gy+5001+Math.floor((gm-9)/7)))/4)+Math.floor((275*gm)/9)+gd+1729777; }
+  let l = jd-1948440+10632; const n = Math.floor((l-1)/10631); l = l-10631*n+354;
+  const j = Math.floor((10985-l)/5316)*Math.floor((50*l)/17719)+Math.floor(l/5670)*Math.floor((43*l)/15238);
+  l = l-Math.floor((30-j)/15)*Math.floor((17719*j)/50)-Math.floor(j/16)*Math.floor((15238*j)/43)+29;
+  const m = Math.floor((24*l)/709), d = l-Math.floor((709*m)/24);
+  return { y: 30*n+j-30, m, d };
+}
+const HIJRI_MONTHS = ["Muḥarram","Ṣafar","Rabīʿ al-Awwal","Rabīʿ al-Thānī","Jumādā al-Ūlā","Jumādā al-Thāniyah","Rajab","Shaʿbān","Ramaḍān","Shawwāl","Dhū al-Qaʿdah","Dhū al-Ḥijjah"];
+const fmtTime = (h) => { if (h==null||isNaN(h)) return "—"; h=fixHour(h); let m=Math.floor(h), mm=Math.round((h-m)*60); if(mm===60){mm=0;m=(m+1)%24;} return `${String(m).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; };
+const fmtDur = (mins) => { mins=Math.max(0,Math.round(mins)); const h=Math.floor(mins/60), m=mins%60; return h===0?`${m}m`:`${h}h ${String(m).padStart(2,"0")}m`; };
+const tzOffsetForDate = (y, m, d) => -new Date(y, m-1, d, 12).getTimezoneOffset()/60;
+const CITIES = [
+  {name:"Stockholm",lat:59.3293,lng:18.0686,tz:"Europe/Stockholm"},{name:"Göteborg",lat:57.7089,lng:11.9746,tz:"Europe/Stockholm"},
+  {name:"Malmö",lat:55.605,lng:13.0038,tz:"Europe/Stockholm"},{name:"London",lat:51.5074,lng:-0.1278,tz:"Europe/London"},
+  {name:"Istanbul",lat:41.0082,lng:28.9784,tz:"Europe/Istanbul"},{name:"Cairo",lat:30.0444,lng:31.2357,tz:"Africa/Cairo"},
+  {name:"Makkah",lat:21.4225,lng:39.8262,tz:"Asia/Riyadh"},{name:"Dubai",lat:25.2048,lng:55.2708,tz:"Asia/Dubai"},
+  {name:"Karachi",lat:24.8607,lng:67.0011,tz:"Asia/Karachi"},{name:"New York",lat:40.7128,lng:-74.006,tz:"America/New_York"},
+];
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RICH NIGHT DIAL V2
+   viewBox 375×430 | cx=187, cy=215 | R=145, SW=20 | A0=130°, SWEEP=280°
+   Arc: Maghrib (lower-left) → midnight (top) → Fajr (lower-right)
+   ───────────────────────────────────────────────────────────────────────────── */
+const STARS = [
+  [160,178,1.8,0.50],[205,162,1.3,0.40],[172,196,1.1,0.50],[220,188,1.5,0.45],
+  [150,220,1.0,0.35],[228,215,1.2,0.50],[168,248,1.5,0.40],[212,250,0.9,0.45],
+  [190,172,0.8,0.30],[192,268,1.0,0.35],[178,230,0.6,0.40],[200,200,0.7,0.30],
+  [164,190,1.2,0.50],[218,200,0.9,0.40],[187,245,1.1,0.35],[175,210,0.5,0.25],
+  [200,225,0.5,0.25],[156,240,0.8,0.30],[218,240,0.8,0.30],[187,185,0.7,0.35],
+];
+
+function NightDial({ night, nowFrac, qibla, dark }) {
+  const VW=375, VH=430, cx=187, cy=215, R=145, SW=20, A0=130, SP=280;
+  const toRad = d => d*Math.PI/180;
+  const pt = (f,r) => { const a=toRad(A0+SP*f); return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; };
+  const arc = (f0,f1,r) => {
+    const [x0,y0]=pt(f0,r), [x1,y1]=pt(f1,r);
+    return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${(f1-f0)*SP>180?1:0} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
+  };
+
+  const optFrac = Math.min(1, Math.max(0, 1-(45/60)/night.nightLen));
+
+  /* gradient endpoint coords */
+  const [g1x0,g1y0]=pt(0,R), [g1x1,g1y1]=pt(1/3,R);
+  const [g3x0,g3y0]=pt(2/3,R), [g3x1,g3y1]=pt(1,R);
+
+  /* colours */
+  const C = dark ? {
+    track:"#0C1428", seg1a:"#6B3E9E", seg1b:"#2A3574",
+    seg2:"#151F44", seg3a:"#4A5EC8", seg3b:"#C8911A",
+    amber:"#D4A82A", amberSoft:"rgba(212,168,42,0.6)",
+    duskDot:"#A07CC0", dawnDot:"#D4A82A",
+    tickColor:"rgba(255,255,255,0.55)", moonColor:"rgba(255,255,255,0.75)",
+    nowDot:"#FFFFFF", starFill:"#FFFFFF", outerRing:"rgba(255,255,255,0.04)",
+  } : {
+    track:"#D6CEEB", seg1a:"#9370BC", seg1b:"#5667A0",
+    seg2:"#4A5A90", seg3a:"#6070B8", seg3b:"#C07820",
+    amber:"#B5730E", amberSoft:"rgba(181,115,14,0.6)",
+    duskDot:"#8058AA", dawnDot:"#B5730E",
+    tickColor:"rgba(20,30,60,0.55)", moonColor:"rgba(20,30,60,0.65)",
+    nowDot:"#1C2030", starFill:"rgba(60,60,100,0.6)", outerRing:"rgba(0,0,0,0.06)",
+  };
+
+  /* Phase marks: fractions + label + whether they get a highlight dot */
+  const phaseMarks = [
+    { f:1/6, label:"1st Sixth", time:fmtTime(night.sixth1), hi:false },
+    { f:1/3, label:"1st Third", time:fmtTime(night.third1), hi:true },
+    { f:1/2, label:"Midnight",  time:fmtTime(night.half),   hi:true },
+    { f:2/3, label:"Tahajjud",  time:fmtTime(night.lastThird), hi:true, glow:true },
+    { f:5/6, label:"Last Sixth",time:fmtTime(night.lastSixth), hi:false },
+  ];
+
+  return (
+    <svg viewBox={`-28 0 ${VW+56} ${VH}`} width="100%" style={{display:"block",overflow:"visible"}}>
+      <defs>
+        {/* First-third gradient: dusk-purple → midnight-navy */}
+        <linearGradient id="gFirst" gradientUnits="userSpaceOnUse"
+          x1={g1x0.toFixed(1)} y1={g1y0.toFixed(1)} x2={g1x1.toFixed(1)} y2={g1y1.toFixed(1)}>
+          <stop offset="0%" stopColor={C.seg1a}/>
+          <stop offset="100%" stopColor={C.seg1b}/>
+        </linearGradient>
+        {/* Last-third gradient: indigo → gold */}
+        <linearGradient id="gLast" gradientUnits="userSpaceOnUse"
+          x1={g3x0.toFixed(1)} y1={g3y0.toFixed(1)} x2={g3x1.toFixed(1)} y2={g3y1.toFixed(1)}>
+          <stop offset="0%" stopColor={C.seg3a}/>
+          <stop offset="55%" stopColor={C.seg3b}/>
+          <stop offset="100%" stopColor={C.amber}/>
+        </linearGradient>
+        {/* Soft glow for last-third bloom */}
+        <filter id="glowGold" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        {/* Glow for Tahajjud phase dot */}
+        <filter id="glowDot" x="-200%" y="-200%" width="500%" height="500%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        {/* Glow for NOW marker */}
+        <filter id="glowNow" x="-150%" y="-150%" width="400%" height="400%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        {/* Radial glow inside center */}
+        <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor={dark?"rgba(100,120,220,0.08)":"rgba(80,80,160,0.05)"}/>
+          <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
+        </radialGradient>
+      </defs>
+
+      {/* ── Decorative outer + inner rings ── */}
+      <circle cx={cx} cy={cy} r={R+SW/2+14} fill="none" stroke={C.outerRing} strokeWidth="1"/>
+      <circle cx={cx} cy={cy} r={R-SW/2-12} fill="none" stroke={C.outerRing} strokeWidth="1"/>
+
+      {/* ── Center glow fill ── */}
+      <circle cx={cx} cy={cy} r={R-SW/2-13} fill="url(#centerGlow)"/>
+
+      {/* ── Stars ── */}
+      {STARS.map(([sx,sy,sr,op],i)=>(
+        <circle key={i} cx={sx} cy={sy} r={sr} fill={C.starFill} opacity={op}
+          style={i<4?{animation:`twinkle${(i%3)+1} ${3+i*0.5}s ease-in-out infinite`}:null}/>
+      ))}
+
+      {/* ── Arc track (background) ── */}
+      <path d={arc(0,1,R)} fill="none" stroke={C.track} strokeWidth={SW+8} strokeLinecap="round"/>
+
+      {/* ── Segment 1: Evening / First Third (purple → navy) ── */}
+      <path d={arc(0,1/3,R)} fill="none" stroke="url(#gFirst)" strokeWidth={SW} strokeLinecap="butt"/>
+
+      {/* ── Segment 2: Deep Night / Middle Third (flat navy) ── */}
+      <path d={arc(1/3,2/3,R)} fill="none" stroke={C.seg2} strokeWidth={SW} strokeLinecap="butt"/>
+
+      {/* ── Segment 3: Tahajjud / Last Third — glow bloom then crisp ── */}
+      <path d={arc(2/3,1,R)} fill="none" stroke="url(#gLast)" strokeWidth={SW+8}
+        strokeLinecap="butt" opacity="0.45" filter="url(#glowGold)"/>
+      <path d={arc(2/3,1,R)} fill="none" stroke="url(#gLast)" strokeWidth={SW}
+        strokeLinecap="butt"/>
+
+      {/* ── Optimistic window (amber inner strip) ── */}
+      <path d={arc(optFrac,1,R-SW/2-8)} fill="none" stroke={C.amber}
+        strokeWidth="5" strokeLinecap="round" opacity="0.90"/>
+      {/* Optimistic glow bloom */}
+      <path d={arc(optFrac,1,R-SW/2-8)} fill="none" stroke={C.amberSoft}
+        strokeWidth="12" strokeLinecap="round" opacity="0.35"/>
+
+      {/* ── Phase tick marks ── */}
+      {phaseMarks.map(({f})=>{
+        const len = (f===1/2||f===1/3||f===2/3) ? 15 : 10;
+        const [xo,yo]=pt(f, R+SW/2+2), [xi,yi]=pt(f, R-SW/2-2);
+        const ang = A0+SP*f, cosA=Math.cos(toRad(ang)), sinA=Math.sin(toRad(ang));
+        const ox=xo+cosA*(len*0.45), oy=yo+sinA*(len*0.45);
+        const ix=xi-cosA*(len*0.45), iy=yi-sinA*(len*0.45);
+        return <line key={f} x1={ix} y1={iy} x2={ox} y2={oy}
+          stroke={C.tickColor} strokeWidth={f===1/2?2.2:f===1/3||f===2/3?1.8:1.2}
+          strokeLinecap="round"/>;
+      })}
+
+      {/* ── Phase dot markers (at arc) ── */}
+      {phaseMarks.filter(p=>p.hi).map(({f,glow})=>{
+        const [px,py]=pt(f,R);
+        return (
+          <g key={f}>
+            {glow && <circle cx={px} cy={py} r={9} fill={C.amber} opacity={0.25} filter="url(#glowDot)"/>}
+            <circle cx={px} cy={py} r={5}
+              fill={dark?"#0C1428":"#FFFFFF"}
+              stroke={glow?C.amber:(f===1/2?"rgba(255,255,255,0.5)":"rgba(255,255,255,0.35)") }
+              strokeWidth={glow?2:1.5}/>
+          </g>
+        );
+      })}
+
+      {/* ── Crescent moon at midnight ── */}
+      {(()=>{
+        const [mx,my]=pt(0.5, R+SW/2+22);
+        return (
+          <g transform={`translate(${mx},${my})`}>
+            <text textAnchor="middle" dominantBaseline="middle" fontSize="17"
+              fill={C.moonColor} style={{userSelect:"none",pointerEvents:"none"}}>🌙</text>
+          </g>
+        );
+      })()}
+
+      {/* ── Sunrise icon at Fajr end ── */}
+      {(()=>{
+        const [sx,sy]=pt(1, R+SW/2+28);
+        const a=(A0+SP)*Math.PI/180;
+        return (
+          <g transform={`translate(${sx+Math.cos(a)*6},${sy+Math.sin(a)*6})`}>
+            <text textAnchor="start" dominantBaseline="middle" fontSize="12"
+              fill={C.dawnDot} style={{userSelect:"none",pointerEvents:"none"}}>☀️</text>
+          </g>
+        );
+      })()}
+
+      {/* ── End cap dots ── */}
+      {(()=>{ const [ex,ey]=pt(0,R); return <circle cx={ex} cy={ey} r={9} fill={dark?"#0C1428":"#EEE9F5"} stroke={C.duskDot} strokeWidth={2.5}/>; })()}
+      {(()=>{ const [ex,ey]=pt(1,R); return <circle cx={ex} cy={ey} r={9} fill={dark?"#0C1428":"#EEE9F5"} stroke={C.dawnDot} strokeWidth={2.5}/>; })()}
+
+      {/* ── NOW marker ── */}
+      {nowFrac!=null && nowFrac>=0 && nowFrac<=1 && (()=>{
+        const [nx,ny]=pt(nowFrac,R);
+        return (
+          <g>
+            {/* outer pulse ring */}
+            <circle cx={nx} cy={ny} r={18} fill="none" stroke={C.nowDot}
+              strokeWidth="1" opacity="0.25" className="now-ring-outer"/>
+            {/* glow */}
+            <circle cx={nx} cy={ny} r={8} fill={C.nowDot} opacity="0.25" filter="url(#glowNow)"/>
+            {/* solid dot */}
+            <circle cx={nx} cy={ny} r={7} fill={C.nowDot}/>
+            <circle cx={nx} cy={ny} r={3} fill={dark?"#0C1428":"#EEE9F5"}/>
+          </g>
+        );
+      })()}
+
+      {/* ── Outer phase labels ── */}
+      {phaseMarks.map(({f,label,time,glow})=>{
+        const LR=R+SW/2+36;
+        const [lx,ly]=pt(f,LR);
+        const ang=A0+SP*f;
+        const cosA=Math.cos(toRad(ang));
+        const anchor=cosA<-0.18?"end":cosA>0.18?"start":"middle";
+        const isGlow=glow;
+        return (
+          <g key={label}>
+            <text x={lx} y={ly-8} textAnchor={anchor} className={isGlow?"phaseHigh":"phaseLbl"}>{label}</text>
+            <text x={lx} y={ly+8} textAnchor={anchor} className={isGlow?"phaseHighTime":"phaseTime"}>{time}</text>
+          </g>
+        );
+      })}
+
+      {/* ── Optimistic label ── */}
+      {(()=>{
+        const LR=R-SW/2-28;
+        const [lx,ly]=pt(optFrac,LR);
+        const ang=A0+SP*optFrac;
+        const cosA=Math.cos(toRad(ang));
+        const anchor=cosA<-0.18?"end":cosA>0.18?"start":"middle";
+        return (
+          <g>
+            <text x={lx} y={ly} textAnchor={anchor} className="optLbl">Fajr−45m</text>
+          </g>
+        );
+      })()}
+
+      {/* ── Endpoint labels: Maghrib & Fajr ── */}
+      {(()=>{
+        const ELR=R+SW/2+42;
+        const [lx,ly]=pt(0,ELR);
+        return (
+          <g>
+            <text x={lx} y={ly-10} textAnchor="end" className="endLbl">Maghrib</text>
+            <text x={lx} y={ly+10} textAnchor="end" className="endTime">{fmtTime(night.maghrib)}</text>
+          </g>
+        );
+      })()}
+      {(()=>{
+        const ELR=R+SW/2+42;
+        const [lx,ly]=pt(1,ELR);
+        return (
+          <g>
+            <text x={lx} y={ly-10} textAnchor="start" className="endLbl">Fajr</text>
+            <text x={lx} y={ly+10} textAnchor="start" className="endTime">{fmtTime(night.fajr)}</text>
+          </g>
+        );
+      })()}
+
+      {/* ── Night length label (in gap at bottom) ── */}
+      <text x={cx} y={VH-18} textAnchor="middle" className="nightLenLbl">
+        Night · {fmtDur(night.nightLen*60)}
+      </text>
+
+      {/* ── Qibla indicator (small, at bottom of inner circle) ── */}
+      {qibla!=null && (()=>{
+        const qDir = qibla < 22.5||qibla>=337.5?"N":qibla<67.5?"NE":qibla<112.5?"E":qibla<157.5?"SE":qibla<202.5?"S":qibla<247.5?"SW":qibla<292.5?"W":"NW";
+        return (
+          <text x={cx} y={cy+68} textAnchor="middle" className="qiblaLbl">
+            🕋 {Math.round(qibla)}° {qDir}
+          </text>
+        );
+      })()}
+    </svg>
+  );
+}
+
+/* ─── Bottom Sheet ─────────────────────────────────────────────────────────── */
+function BottomSheet({ title, onClose, children }) {
+  return (
+    <div className="sheetOverlay" onClick={onClose}>
+      <div className="sheet" onClick={e=>e.stopPropagation()}>
+        <div className="sheetHandle"/>
+        <div className="sheetHead">
+          <span className="sheetTitle">{title}</span>
+          <button className="sheetClose" onClick={onClose}>✕</button>
+        </div>
+        <div className="sheetBody">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main App ─────────────────────────────────────────────────────────────── */
+function QiyamV2() {
+  const [theme, setTheme] = useState("dark");
+  const [now, setNow] = useState(new Date());
+  const [coords, setCoords] = useState(null);
+  const [label, setLabel] = useState("");
+  const [locationTz, setLocationTz] = useState(null);
+  const [locState, setLocState] = useState("detecting");
+  const [selDate, setSelDate] = useState(null);
+  const [fajrAngle, setFajrAngle] = useState(18);
+  const [showTimes, setShowTimes] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [alarmMsg, setAlarmMsg] = useState("");
+  const [manualLat, setManualLat] = useState("");
+  const [manualLng, setManualLng] = useState("");
+  const dark = theme === "dark";
+
+  useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
+
+  useEffect(()=>{
+    let done=false;
+    const useIP=()=>{
+      fetch("https://ipapi.co/json/").then(r=>r.json()).then(j=>{
+        if(done)return;
+        if(j&&j.latitude!=null){
+          setCoords({lat:j.latitude,lng:j.longitude});
+          setLabel(j.city?`${j.city}${j.country_name?", "+j.country_name:""}`:"Approx. location");
+          if(j.timezone)setLocationTz(j.timezone);
+          setLocState("ok");
+        } else setLocState("manual");
+      }).catch(()=>{if(!done)setLocState("manual");});
+    };
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(
+        pos=>{
+          if(done)return; done=true;
+          setCoords({lat:pos.coords.latitude,lng:pos.coords.longitude});
+          setLabel("Your location"); setLocState("ok");
+          fetch("https://ipapi.co/json/").then(r=>r.json()).then(j=>{
+            if(j&&j.city)setLabel(`${j.city}${j.country_name?", "+j.country_name:""}`);
+            if(j&&j.timezone)setLocationTz(j.timezone);
+          }).catch(()=>{});
+        },
+        ()=>useIP(), {timeout:8000, maximumAge:600000}
+      );
+      setTimeout(()=>{if(!coords&&!done)useIP();},9000);
+    } else useIP();
+    return ()=>{done=true;};
+    // eslint-disable-next-line
+  },[]);
+
+  const view = useMemo(()=>{
+    if(!coords)return null;
+    const {lat,lng}=coords;
+    const base=selDate||now;
+    const compute=off=>{
+      const dd=new Date(base.getFullYear(),base.getMonth(),base.getDate()+off);
+      return computeNight(lat,lng,tzOffsetForDate,dd.getFullYear(),dd.getMonth()+1,dd.getDate(),fajrAngle);
+    };
+    let dateUsed=new Date(base.getFullYear(),base.getMonth(),base.getDate());
+    let n=compute(0);
+    if(!selDate&&!n.polar){
+      const hNow=now.getHours()+now.getMinutes()/60+now.getSeconds()/3600;
+      const y=compute(-1);
+      if(!y.polar&&hNow<fixHour(y.fajr)){n=y;dateUsed=new Date(base.getFullYear(),base.getMonth(),base.getDate()-1);}
+    }
+    return {n, dateUsed};
+  },[coords,selDate,now,fajrAngle]);
+
+  const night=view&&!view.n.polar?view.n:null;
+
+  const live=useMemo(()=>{
+    if(!night)return null;
+    const hNow=now.getHours()+now.getMinutes()/60+now.getSeconds()/3600;
+    let cur=hNow;
+    if(cur<night.maghrib-0.001)cur+=24;
+    const frac=(cur-night.maghrib)/night.nightLen;
+    const inNight=frac>=0&&frac<=1;
+    // Phase name
+    let phaseName="", phaseColor="var(--muted)";
+    if(inNight){
+      if(frac<1/3){phaseName="Evening";phaseColor="var(--seg1b)";}
+      else if(frac<2/3){phaseName="Deep Night";phaseColor="var(--seg2-label)";}
+      else{phaseName="Tahajjud Zone";phaseColor="var(--amber)";}
+    }
+    const events=[
+      {key:"Tahajjud",t:night.lastThird},{key:"Fajr",t:night.fajr},
+    ];
+    let next=null;
+    for(const e of events){if(cur<e.t-0.0005){next=e;break;}}
+    if(!next&&cur<night.fajr)next={key:"Fajr",t:night.fajr};
+    return {frac:inNight?frac:null, next, cur, phaseName, phaseColor, inNight};
+  },[night,now]);
+
+  const qibla=coords?qiblaBearing(coords.lat,coords.lng):null;
+  const dispDate=view?view.dateUsed:now;
+  const hij=gregToHijri(dispDate.getFullYear(),dispDate.getMonth()+1,dispDate.getDate());
+
+  const clockStr=now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,...(locationTz?{timeZone:locationTz}:{})});
+  const clockMain=clockStr.slice(0,5);
+
+  const planTahajjud=()=>{
+    if(!night)return;
+    const d=view.dateUsed;
+    const oh=fixHour(night.optimistic), rollover=night.optimistic>=24;
+    const dt=new Date(d.getFullYear(),d.getMonth(),d.getDate()+(rollover?1:0),Math.floor(oh),Math.round((oh-Math.floor(oh))*60));
+    const end=new Date(dt.getTime()+45*60000);
+    const pad=x=>String(x).padStart(2,"0");
+    const f=x=>`${x.getFullYear()}${pad(x.getMonth()+1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
+    const ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//QiyamV2//EN","BEGIN:VEVENT",
+      `DTSTART:${f(dt)}`,`DTEND:${f(end)}`,"SUMMARY:Tahajjud / Qiyam al-Layl",
+      "DESCRIPTION:Optimistic wake time (Fajr − 45 min). Personal method.",
+      "BEGIN:VALARM","TRIGGER:PT0M","ACTION:DISPLAY","DESCRIPTION:Time for Qiyam al-Layl","END:VALARM",
+      "END:VEVENT","END:VCALENDAR"].join("\r\n");
+    try{
+      const url=URL.createObjectURL(new Blob([ics],{type:"text/calendar"}));
+      const a=document.createElement("a"); a.href=url; a.download="tahajjud.ics";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+      setAlarmMsg(`Reminder set for ${fmtTime(night.optimistic)}`);
+    } catch { setAlarmMsg(`Set alarm for ${fmtTime(night.optimistic)}`); }
+    setShowTimes(false);
+  };
+
+  const vars = dark ? {
+    "--bg":"#080C18","--bg-elev":"#0F1526","--ink":"#ECE9DF","--muted":"#8A90A6",
+    "--line":"rgba(236,233,223,0.10)","--line-strong":"rgba(236,233,223,0.28)",
+    "--amber":"#D4A82A","--amber-soft":"rgba(212,168,42,0.15)",
+    "--indigo":"#9AA9DE","--indigo-soft":"rgba(154,169,222,0.12)",
+    "--dusk":"#B58FCB","--dawn":"#D9B477",
+    "--seg1b":"#7080D0","--seg2-label":"#9AA9DE",
+    "--glow":"radial-gradient(ellipse 80% 60% at 50% 0%, rgba(100,120,220,0.18) 0%, transparent 70%)",
+  } : {
+    "--bg":"#F0EDE3","--bg-elev":"#FAFAF4","--ink":"#1C2030","--muted":"#71748A",
+    "--line":"rgba(28,32,48,0.10)","--line-strong":"rgba(28,32,48,0.28)",
+    "--amber":"#B07D3B","--amber-soft":"rgba(176,125,59,0.13)",
+    "--indigo":"#2E3A66","--indigo-soft":"rgba(46,58,102,0.10)",
+    "--dusk":"#8A6FA0","--dawn":"#D2A85A",
+    "--seg1b":"#5060A0","--seg2-label":"#4A5A90",
+    "--glow":"radial-gradient(ellipse 80% 50% at 50% 100%, rgba(200,163,91,0.18) 0%, transparent 70%)",
+  };
+
+  return (
+    <div style={vars} className="v2root">
+      <style>{CSS}</style>
+
+      {/* ── TOP BAR ── */}
+      <header className="topbar">
+        <button className="topPill loc" onClick={()=>setShowSettings(true)}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <span>{label||(locState==="detecting"?"Locating…":"Set location")}</span>
+        </button>
+        <div className="topDate">
+          <span>{dispDate.toLocaleDateString(undefined,{day:"numeric",month:"short"})}</span>
+          <span className="topHij"> · {hij.d} {HIJRI_MONTHS[hij.m-1].split(" ")[0]}</span>
+        </div>
+        <button className="topIconBtn" onClick={()=>setTheme(dark?"light":"dark")} aria-label="Toggle theme">
+          {dark
+            ? <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>}
+        </button>
+      </header>
+
+      {/* ── DIAL AREA ── */}
+      <main className="dialArea">
+        {night ? (
+          <div className="dialWrap">
+            <NightDial night={night} nowFrac={live?live.frac:null} qibla={qibla} dark={dark}/>
+
+            {/* Center overlay: time + phase */}
+            <div className="centerOverlay">
+              <div className="bigClock">{clockMain}</div>
+              {live && live.inNight ? (
+                <>
+                  <div className="phaseBadge" style={{color:live.phaseColor}}>{live.phaseName}</div>
+                  {live.next&&(
+                    <div className="countdownTxt">
+                      {live.next.key} <b>{fmtDur((live.next.t-live.cur)*60)}</b> away
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="phaseBadge" style={{color:"var(--muted)"}}>
+                  {live&&live.frac===null?"Night ended":locState==="detecting"?"":"Outside night"}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="dialPlaceholder">
+            {locState==="detecting"&&!coords && <div className="notice">Finding your location…</div>}
+            {view&&view.n.polar && <div className="notice">No true night on this date. Try a different date or location.</div>}
+          </div>
+        )}
+
+        {/* High-lat warning */}
+        {night&&night.highLat&&(
+          <div className="hlBadge">white-night mode</div>
+        )}
+      </main>
+
+      {/* ── BOTTOM ACTIONS ── */}
+      {night && (
+        <footer className="bottomBar">
+          <button className="actionBtn secondary" onClick={()=>setShowTimes(true)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            Prayer Times
+          </button>
+          <button className="actionBtn primary" onClick={planTahajjud}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            Plan Tahajjud
+          </button>
+        </footer>
+      )}
+
+      {/* ── PRAYER TIMES BOTTOM SHEET ── */}
+      {showTimes&&night&&(
+        <BottomSheet title="Prayer Times" onClose={()=>setShowTimes(false)}>
+          <div className="timesGrid">
+            <TimeRow label="Maghrib" time={fmtTime(night.maghrib)} dot="dusk"/>
+            <TimeRow label="1st Third ends" time={fmtTime(night.third1)} dot="seg"/>
+            <TimeRow label="Midnight" time={fmtTime(night.half)} dot="seg"/>
+            <TimeRow label="Last Third (Tahajjud)" time={fmtTime(night.lastThird)} dot="amber" highlight/>
+            <TimeRow label="Optimistic · Fajr−45m" time={fmtTime(night.optimistic)} dot="amber"/>
+            <TimeRow label="Fajr" time={fmtTime(night.fajr)} dot="dawn"/>
+          </div>
+          <div className="sheetNlen">Night length · {fmtDur(night.nightLen*60)}</div>
+          <button className="sheetPlanBtn" onClick={planTahajjud}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            Plan my Tahajjud (Fajr−45m)
+          </button>
+          {alarmMsg&&<div className="alarmMsg">{alarmMsg}</div>}
+          <p className="sheetDisclaim">Optimistic is a personal practical method — not a fiqh ruling.</p>
+        </BottomSheet>
+      )}
+
+      {/* ── SETTINGS BOTTOM SHEET ── */}
+      {showSettings&&(
+        <BottomSheet title="Settings & Location" onClose={()=>setShowSettings(false)}>
+          <div className="settingsBody">
+            <label className="setRow">
+              <span>Plan a date</span>
+              <input type="date" className="setInp"
+                value={view?`${view.dateUsed.getFullYear()}-${String(view.dateUsed.getMonth()+1).padStart(2,"0")}-${String(view.dateUsed.getDate()).padStart(2,"0")}` : ""}
+                onChange={e=>{
+                  if(!e.target.value){setSelDate(null);return;}
+                  const [y,m,d]=e.target.value.split("-").map(Number);
+                  setSelDate(new Date(y,m-1,d));
+                }}/>
+            </label>
+            {selDate&&<button className="ghostBtn" onClick={()=>setSelDate(null)}>↩ Back to tonight</button>}
+            <label className="setRow">
+              <span>Fajr angle</span>
+              <select className="setInp" value={fajrAngle} onChange={e=>setFajrAngle(Number(e.target.value))}>
+                <option value={18}>18° (standard)</option>
+                <option value={17}>17°</option>
+                <option value={15}>15°</option>
+                <option value={19.5}>19.5°</option>
+              </select>
+            </label>
+            <label className="setRow">
+              <span>City</span>
+              <select className="setInp" defaultValue="" onChange={e=>{
+                const c=CITIES.find(x=>x.name===e.target.value);
+                if(c){setCoords({lat:c.lat,lng:c.lng});setLabel(c.name);setLocationTz(c.tz);setShowSettings(false);}
+              }}>
+                <option value="" disabled>Choose…</option>
+                {CITIES.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+            </label>
+            <div className="setRow">
+              <span>Coordinates</span>
+              <div style={{display:"flex",gap:6}}>
+                <input className="setInp sm" placeholder="lat" value={manualLat} onChange={e=>setManualLat(e.target.value)}/>
+                <input className="setInp sm" placeholder="lng" value={manualLng} onChange={e=>setManualLng(e.target.value)}/>
+                <button className="ghostBtn sm" onClick={()=>{
+                  const la=parseFloat(manualLat),ln=parseFloat(manualLng);
+                  if(!isNaN(la)&&!isNaN(ln)){setCoords({lat:la,lng:ln});setLabel("Custom");setShowSettings(false);}
+                }}>Set</button>
+              </div>
+            </div>
+          </div>
+        </BottomSheet>
+      )}
+    </div>
+  );
+}
+
+/* ─── TimeRow ──────────────────────────────────────────────────────────────── */
+function TimeRow({label, time, dot, highlight}) {
+  const dotColors={dusk:"var(--dusk)",seg:"var(--indigo)",amber:"var(--amber)",dawn:"var(--dawn)"};
+  return (
+    <div className={`timeRow${highlight?" timeRowHi":""}`}>
+      <span className="trDot" style={{background:dotColors[dot]||"var(--muted)"}}/>
+      <span className="trLabel">{label}</span>
+      <span className="trTime">{time}</span>
+    </div>
+  );
+}
+
+/* ─── CSS ──────────────────────────────────────────────────────────────────── */
+const CSS = `
+/* ── Reset & base ── */
+*{box-sizing:border-box;}
+.v2root{
+  background:var(--bg); color:var(--ink); min-height:100vh;
+  font-family:'Avenir Next','Avenir','Segoe UI','Helvetica Neue',Helvetica,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column;
+  position:relative; overflow:hidden;
+}
+.v2root::before{
+  content:""; position:absolute; inset:0;
+  background:var(--glow); pointer-events:none; z-index:0;
+}
+.v2root > * { position:relative; z-index:1; }
+
+/* ── Top Bar ── */
+.topbar{
+  display:grid; grid-template-columns:1fr auto 1fr;
+  align-items:center; gap:8px;
+  padding:12px 16px 8px;
+  padding-top:max(12px, env(safe-area-inset-top, 12px));
+}
+.topPill{
+  display:inline-flex; align-items:center; gap:5px;
+  background:var(--bg-elev); border:1px solid var(--line);
+  border-radius:20px; padding:5px 10px 5px 8px;
+  font-size:12px; color:var(--muted); cursor:pointer;
+  max-width:140px; overflow:hidden;
+  white-space:nowrap; text-overflow:ellipsis;
+  font-family:inherit;
+}
+.topPill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.topDate{
+  text-align:center; font-size:12.5px; color:var(--muted);
+  white-space:nowrap;
+}
+.topHij{ font-size:11px; opacity:.75; }
+.topIconBtn{
+  justify-self:end;
+  width:34px; height:34px; border-radius:50%;
+  background:var(--bg-elev); border:1px solid var(--line);
+  display:grid; place-items:center; cursor:pointer;
+  color:var(--ink); transition:transform .15s;
+}
+.topIconBtn:hover{transform:translateY(-1px);}
+
+/* ── Dial Area ── */
+.dialArea{
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding:0 0 8px;
+}
+.dialWrap{
+  width:100%; max-width:430px;
+  position:relative;
+  animation:fadeUp .8s ease both;
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+.dialPlaceholder{padding:40px 24px;}
+.notice{
+  background:var(--bg-elev); border:1px solid var(--line);
+  border-radius:14px; padding:14px 16px; font-size:13.5px;
+  color:var(--muted); line-height:1.5; text-align:center;
+}
+
+/* ── Center Overlay (absolute over SVG) ── */
+.centerOverlay{
+  position:absolute;
+  left:50%; top:51%;
+  transform:translate(-50%,-50%);
+  display:flex; flex-direction:column; align-items:center;
+  pointer-events:none; text-align:center; gap:4px;
+}
+.bigClock{
+  font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;
+  font-size:clamp(40px,11vw,58px); font-weight:600;
+  line-height:1; letter-spacing:2px;
+}
+.phaseBadge{
+  font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+  font-weight:700; opacity:.9;
+}
+.countdownTxt{
+  font-size:12px; color:var(--muted); margin-top:1px;
+}
+.countdownTxt b{color:var(--ink); font-weight:600;}
+
+/* ── High-lat badge ── */
+.hlBadge{
+  margin:4px auto 0; display:inline-block;
+  font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--amber); border:1px solid var(--amber-soft);
+  padding:2px 9px; border-radius:20px; background:var(--amber-soft);
+}
+
+/* ── Bottom Bar ── */
+.bottomBar{
+  padding:10px 16px;
+  padding-bottom:max(18px, env(safe-area-inset-bottom, 18px));
+  display:flex; gap:10px;
+}
+.actionBtn{
+  flex:1; border:none; cursor:pointer; border-radius:14px;
+  padding:14px 10px; font-size:14.5px; font-weight:600;
+  font-family:inherit; display:inline-flex; align-items:center;
+  justify-content:center; gap:7px;
+  transition:transform .15s, opacity .15s;
+}
+.actionBtn:hover{transform:translateY(-1px); opacity:.93;}
+.actionBtn.secondary{
+  background:var(--bg-elev); color:var(--ink);
+  border:1px solid var(--line-strong);
+}
+.actionBtn.primary{
+  background:var(--amber); color:#fff;
+  box-shadow:0 4px 20px var(--amber-soft);
+}
+
+/* ── Bottom Sheet ── */
+.sheetOverlay{
+  position:fixed; inset:0; z-index:100;
+  background:rgba(0,0,0,0.55); backdrop-filter:blur(4px);
+  display:flex; align-items:flex-end;
+  animation:overlayIn .22s ease both;
+}
+@keyframes overlayIn{from{opacity:0}to{opacity:1}}
+.sheet{
+  width:100%; background:var(--bg-elev);
+  border-radius:24px 24px 0 0;
+  padding-bottom:max(24px, env(safe-area-inset-bottom, 24px));
+  animation:sheetUp .28s cubic-bezier(.2,.8,.4,1) both;
+  max-height:88vh; overflow-y:auto;
+}
+@keyframes sheetUp{from{transform:translateY(100%)}to{transform:none}}
+.sheetHandle{
+  width:40px; height:4px; border-radius:2px;
+  background:var(--line-strong); margin:10px auto 0;
+}
+.sheetHead{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 20px 4px;
+}
+.sheetTitle{font-size:16px; font-weight:700; letter-spacing:.01em;}
+.sheetClose{
+  background:none; border:none; color:var(--muted);
+  font-size:16px; cursor:pointer; padding:4px 8px; font-family:inherit;
+}
+.sheetBody{padding:8px 20px 0;}
+
+/* ── Times Grid ── */
+.timesGrid{display:flex; flex-direction:column; gap:2px; margin-bottom:8px;}
+.timeRow{
+  display:flex; align-items:center; gap:10px;
+  padding:11px 4px; border-bottom:1px solid var(--line);
+}
+.timeRowHi{background:var(--amber-soft); border-radius:10px; padding:11px 10px; margin:4px -6px;}
+.trDot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.trLabel{flex:1; font-size:14px;}
+.trTime{
+  font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;
+  font-size:22px; font-weight:600; letter-spacing:.5px;
+}
+.sheetNlen{
+  text-align:center; color:var(--muted); font-size:12px;
+  letter-spacing:.07em; text-transform:uppercase; margin:10px 0 14px;
+}
+.sheetPlanBtn{
+  width:100%; border:none; cursor:pointer; border-radius:12px;
+  background:var(--amber); color:#fff; padding:13px;
+  font-size:15px; font-weight:600; font-family:inherit;
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  transition:transform .15s, opacity .15s;
+}
+.sheetPlanBtn:hover{transform:translateY(-1px); opacity:.93;}
+.alarmMsg{margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.45;text-align:center;}
+.sheetDisclaim{font-size:11px;color:var(--muted);font-style:italic;text-align:center;margin:10px 0 0;line-height:1.5;}
+
+/* ── Settings Sheet ── */
+.settingsBody{display:flex;flex-direction:column;gap:12px;}
+.setRow{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13.5px;}
+.setInp{background:var(--bg);color:var(--ink);border:1px solid var(--line-strong);border-radius:9px;padding:7px 9px;font-size:13px;font-family:inherit;}
+.setInp.sm{width:64px;}
+.ghostBtn{background:none;border:1px solid var(--line-strong);color:var(--ink);border-radius:9px;padding:7px 12px;font-size:12.5px;cursor:pointer;font-family:inherit;}
+.ghostBtn.sm{padding:6px 10px;font-size:12px;}
+
+/* ── SVG dial text classes ── */
+.phaseLbl{fill:var(--muted);font-size:10.5px;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.04em;}
+.phaseTime{fill:var(--muted);font-size:10px;font-family:'Avenir Next',system-ui,sans-serif;opacity:.7;}
+.phaseHigh{fill:var(--amber);font-size:11.5px;font-weight:700;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.05em;paint-order:stroke fill;stroke:var(--bg);stroke-width:5px;}
+.phaseHighTime{fill:var(--amber);font-size:11px;font-family:'Avenir Next',system-ui,sans-serif;font-weight:600;paint-order:stroke fill;stroke:var(--bg);stroke-width:4px;}
+.optLbl{fill:var(--amber);font-size:9px;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.04em;opacity:.8;}
+.endLbl{fill:var(--muted);font-size:10px;letter-spacing:.05em;font-family:'Avenir Next',system-ui,sans-serif;text-transform:uppercase;}
+.endTime{fill:var(--ink);font-size:13px;font-weight:700;font-family:'Cormorant Garamond',Georgia,serif;letter-spacing:.5px;}
+.nightLenLbl{fill:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-family:'Avenir Next',system-ui,sans-serif;}
+.qiblaLbl{fill:var(--muted);font-size:11px;font-family:'Avenir Next',system-ui,sans-serif;}
+
+/* ── Now ring pulse ── */
+.now-ring-outer{animation:nowPulse 2.2s ease-out infinite;}
+@keyframes nowPulse{0%{r:10;opacity:.35}80%{r:24;opacity:0}100%{r:10;opacity:0}}
+
+/* ── Star twinkle ── */
+@keyframes twinkle1{0%,100%{opacity:.5}50%{opacity:.15}}
+@keyframes twinkle2{0%,100%{opacity:.4}60%{opacity:.1}}
+@keyframes twinkle3{0%,100%{opacity:.45}40%{opacity:.12}}
+`;
+
+ReactDOM.createRoot(document.getElementById("root")).render(<QiyamV2/>);
+</script>
+</body>
+</html>
