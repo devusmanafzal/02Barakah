@@ -137,14 +137,45 @@ const STARS = [
   [200,225,0.5,0.25],[156,240,0.8,0.30],[218,240,0.8,0.30],[187,185,0.7,0.35],
 ];
 
-function NightDial({ night, nowFrac, qibla, dark }) {
+function NightDial({ night, nowFrac, qibla, dark, selectedFrac, onScrub }) {
   const VW=375, VH=430, cx=187, cy=215, R=145, SW=20, A0=130, SP=280;
   const toRad = d => d*Math.PI/180;
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const pt = (f,r) => { const a=toRad(A0+SP*f); return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; };
   const arc = (f0,f1,r) => {
     const [x0,y0]=pt(f0,r), [x1,y1]=pt(f1,r);
     return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${(f1-f0)*SP>180?1:0} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
   };
+  const dragging = useRef(false);
+
+  const fracFromEvent = (e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const sx = (e.clientX - box.left) / box.width;
+    const sy = (e.clientY - box.top) / box.height;
+    const x = -28 + sx * (VW + 56);
+    const y = sy * VH;
+    const dx = x - cx, dy = y - cy;
+    const dist = Math.hypot(dx, dy);
+    if (Math.abs(dist - R) > 34) return null;
+    let deg = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    if (deg < A0) deg += 360;
+    return clamp01((deg - A0) / SP);
+  };
+
+  const handlePointerDown = (e) => {
+    const f = fracFromEvent(e);
+    if (f == null) return;
+    dragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    onScrub(f);
+  };
+  const handlePointerMove = (e) => {
+    if (!dragging.current) return;
+    const f = fracFromEvent(e);
+    if (f == null) return;
+    onScrub(f);
+  };
+  const handlePointerUp = () => { dragging.current = false; };
 
   const optFrac = Math.min(1, Math.max(0, 1-(45/60)/night.nightLen));
 
@@ -174,12 +205,21 @@ function NightDial({ night, nowFrac, qibla, dark }) {
     { f:1/6, label:"1st Sixth", time:fmtTime(night.sixth1), hi:false },
     { f:1/3, label:"1st Third", time:fmtTime(night.third1), hi:true },
     { f:1/2, label:"Midnight",  time:fmtTime(night.half),   hi:true },
-    { f:2/3, label:"Tahajjud",  time:fmtTime(night.lastThird), hi:true, glow:true },
+    { f:2/3, label:"Tahajjud ✨",  time:fmtTime(night.lastThird), hi:true, glow:true },
     { f:5/6, label:"Last Sixth",time:fmtTime(night.lastSixth), hi:false },
   ];
 
   return (
-    <svg viewBox={`-28 0 ${VW+56} ${VH}`} width="100%" style={{display:"block",overflow:"visible"}}>
+    <svg
+      viewBox={`-28 0 ${VW+56} ${VH}`}
+      width="100%"
+      style={{display:"block",overflow:"visible", touchAction:"none"}}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+    >
       <defs>
         {/* First-third gradient: dusk-purple → midnight-navy */}
         <linearGradient id="gFirst" gradientUnits="userSpaceOnUse"
@@ -321,6 +361,18 @@ function NightDial({ night, nowFrac, qibla, dark }) {
         );
       })()}
 
+      {/* ── Scrub marker ── */}
+      {selectedFrac!=null && selectedFrac>=0 && selectedFrac<=1 && (()=>{
+        const [sx,sy] = pt(selectedFrac, R);
+        return (
+          <g>
+            <circle cx={sx} cy={sy} r={20} fill="none" stroke={dark?"rgba(255,255,255,0.25)":"rgba(20,30,60,0.35)"} strokeWidth="1.2" />
+            <circle cx={sx} cy={sy} r={9} fill={dark?"#8FB3FF":"#2E3A66"} />
+            <circle cx={sx} cy={sy} r={4} fill={dark?"#0C1428":"#F0EDE3"} />
+          </g>
+        );
+      })()}
+
       {/* ── Outer phase labels ── */}
       {phaseMarks.map(({f,label,time,glow})=>{
         const LR=R+SW/2+36;
@@ -346,7 +398,7 @@ function NightDial({ night, nowFrac, qibla, dark }) {
         const anchor=cosA<-0.18?"end":cosA>0.18?"start":"middle";
         return (
           <g>
-            <text x={lx} y={ly} textAnchor={anchor} className="optLbl">Fajr−45m</text>
+            <text x={lx} y={ly} textAnchor={anchor} className="optLbl">Optimistic ⓘ</text>
           </g>
         );
       })()}
@@ -422,16 +474,30 @@ function QiyamV2() {
   const [alarmMsg, setAlarmMsg] = useState("");
   const [manualLat, setManualLat] = useState("");
   const [manualLng, setManualLng] = useState("");
+  const [heading, setHeading] = useState(null);
+  const [compassOn, setCompassOn] = useState(false);
+  const [selectedFrac, setSelectedFrac] = useState(null);
+  const [infoTip, setInfoTip] = useState("");
   const dark = theme === "dark";
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t); },[]);
 
   useEffect(()=>{
     let done=false;
+    const fallback = setTimeout(() => {
+      if (!done && !coords) {
+        const c = CITIES[0];
+        setCoords({ lat: c.lat, lng: c.lng });
+        setLabel(`${c.name} (default)`);
+        setLocationTz(c.tz);
+        setLocState("manual");
+      }
+    }, 12000);
     const useIP=()=>{
       fetch("https://ipapi.co/json/").then(r=>r.json()).then(j=>{
         if(done)return;
         if(j&&j.latitude!=null){
+          done = true;
           setCoords({lat:j.latitude,lng:j.longitude});
           setLabel(j.city?`${j.city}${j.country_name?", "+j.country_name:""}`:"Approx. location");
           if(j.timezone)setLocationTz(j.timezone);
@@ -454,9 +520,27 @@ function QiyamV2() {
       );
       setTimeout(()=>{if(!coords&&!done)useIP();},9000);
     } else useIP();
-    return ()=>{done=true;};
+    return ()=>{done=true; clearTimeout(fallback);};
     // eslint-disable-next-line
   },[]);
+
+  const enableCompass = useCallback(() => {
+    const handler = (e) => {
+      let h = null;
+      if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+      else if (e.alpha != null) h = 360 - e.alpha;
+      if (h != null) setHeading(h);
+    };
+    const start = () => {
+      window.addEventListener("deviceorientationabsolute", handler, true);
+      window.addEventListener("deviceorientation", handler, true);
+      setCompassOn(true);
+    };
+    const DOE = typeof DeviceOrientationEvent !== "undefined" ? DeviceOrientationEvent : null;
+    if (DOE && typeof DOE.requestPermission === "function") {
+      DOE.requestPermission().then((s) => { if (s === "granted") start(); }).catch(() => {});
+    } else start();
+  }, []);
 
   const view = useMemo(()=>{
     if(!coords)return null;
@@ -504,6 +588,30 @@ function QiyamV2() {
   const qibla=coords?qiblaBearing(coords.lat,coords.lng):null;
   const dispDate=view?view.dateUsed:now;
   const hij=gregToHijri(dispDate.getFullYear(),dispDate.getMonth()+1,dispDate.getDate());
+
+  const inspect = useMemo(() => {
+    if (!night) return null;
+    const frac = selectedFrac != null ? selectedFrac : live?.frac;
+    if (frac == null || frac < 0 || frac > 1) return null;
+    const t = night.maghrib + night.nightLen * frac;
+    const minsToFajr = Math.max(0, Math.round((night.fajr - t) * 60));
+    let segment = "";
+    if (frac < 1/3) segment = "Evening / First Third";
+    else if (frac < 2/3) segment = "Deep Night / Middle Third";
+    else segment = "Tahajjud / Last Third";
+    let nearest = "";
+    const points = [
+      { n: "Maghrib", v: night.maghrib },
+      { n: "1st Third", v: night.third1 },
+      { n: "Midnight", v: night.half },
+      { n: "Tahajjud start", v: night.lastThird },
+      { n: "Optimistic", v: night.optimistic },
+      { n: "Fajr", v: night.fajr },
+    ];
+    const nearestPoint = points.reduce((a,b)=> Math.abs(b.v - t) < Math.abs(a.v - t) ? b : a, points[0]);
+    nearest = nearestPoint.n;
+    return { frac, time: fmtTime(t), minsToFajr, segment, nearest };
+  }, [night, live, selectedFrac]);
 
   const clockStr=now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,...(locationTz?{timeZone:locationTz}:{})});
   const clockMain=clockStr.slice(0,5);
@@ -573,7 +681,14 @@ function QiyamV2() {
       <main className="dialArea">
         {night ? (
           <div className="dialWrap">
-            <NightDial night={night} nowFrac={live?live.frac:null} qibla={qibla} dark={dark}/>
+            <NightDial
+              night={night}
+              nowFrac={live?live.frac:null}
+              qibla={qibla}
+              dark={dark}
+              selectedFrac={selectedFrac}
+              onScrub={setSelectedFrac}
+            />
 
             {/* Center overlay: time + phase */}
             <div className="centerOverlay">
@@ -592,6 +707,31 @@ function QiyamV2() {
                   {live&&live.frac===null?"Night ended":locState==="detecting"?"":"Outside night"}
                 </div>
               )}
+            </div>
+
+            <div className="compassDock">
+              {compassOn
+                ? <div className="qibBadge">🕋 Qibla {qibla!=null?Math.round(qibla):"—"}°{heading==null?" · calibrating…":""}</div>
+                : <button className="compassBtn" onClick={enableCompass}>🧭 Enable compass</button>}
+            </div>
+
+            <div className="dialDetail">
+              <div className="dialDetailTop">
+                <span className="dialDetailTitle">{selectedFrac!=null?"Dial selection":"Live dial"}</span>
+                {selectedFrac!=null && <button className="miniBtn" onClick={()=>setSelectedFrac(null)}>Back to live</button>}
+              </div>
+              {inspect ? (
+                <>
+                  <div className="dialDetailTime">{inspect.time}</div>
+                  <div className="dialDetailMeta">{inspect.segment} · nearest {inspect.nearest} · {inspect.minsToFajr}m to Fajr</div>
+                </>
+              ) : <div className="dialDetailMeta">Tap or drag on the dial to inspect any point of the night.</div>}
+              <div className="dialDetailInfoRow">
+                <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="tahajjud"?"":"tahajjud")}>✨ Tahajjud ⓘ</button>
+                <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="optimistic"?"":"optimistic")}>Optimistic ⓘ</button>
+              </div>
+              {infoTip==="tahajjud" && <div className="infoTip">Tahajjud in the last third is the recommended and most beloved time for night prayer.</div>}
+              {infoTip==="optimistic" && <div className="infoTip">Optimistic is a personal practical window: wake around Fajr−45m and continue directly into Fajr.</div>}
             </div>
           </div>
         ) : (
@@ -628,8 +768,8 @@ function QiyamV2() {
             <TimeRow label="Maghrib" time={fmtTime(night.maghrib)} dot="dusk"/>
             <TimeRow label="1st Third ends" time={fmtTime(night.third1)} dot="seg"/>
             <TimeRow label="Midnight" time={fmtTime(night.half)} dot="seg"/>
-            <TimeRow label="Last Third (Tahajjud)" time={fmtTime(night.lastThird)} dot="amber" highlight/>
-            <TimeRow label="Optimistic · Fajr−45m" time={fmtTime(night.optimistic)} dot="amber"/>
+            <TimeRow label="Last Third (Tahajjud) ✨" time={fmtTime(night.lastThird)} dot="amber" highlight/>
+            <TimeRow label="Optimistic ⓘ" time={fmtTime(night.optimistic)} dot="amber"/>
             <TimeRow label="Fajr" time={fmtTime(night.fajr)} dot="dawn"/>
           </div>
           <div className="sheetNlen">Night length · {fmtDur(night.nightLen*60)}</div>
@@ -767,6 +907,9 @@ const CSS = `
 }
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 
+.dialWrap svg{cursor:grab;}
+.dialWrap svg:active{cursor:grabbing;}
+
 .dialPlaceholder{padding:40px 24px;}
 .notice{
   background:var(--bg-elev); border:1px solid var(--line);
@@ -795,6 +938,70 @@ const CSS = `
   font-size:12px; color:var(--muted); margin-top:1px;
 }
 .countdownTxt b{color:var(--ink); font-weight:600;}
+
+.compassDock{
+  position:absolute;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:56px;
+}
+.compassBtn{
+  border:none;
+  background:var(--indigo);
+  color:#fff;
+  border-radius:20px;
+  padding:8px 14px;
+  font-size:12px;
+  font-weight:700;
+  cursor:pointer;
+  font-family:inherit;
+}
+.qibBadge{
+  background:var(--bg-elev);
+  border:1px solid var(--line);
+  color:var(--ink);
+  border-radius:20px;
+  padding:7px 12px;
+  font-size:11.5px;
+  font-weight:600;
+  white-space:nowrap;
+}
+
+.dialDetail{
+  margin:0 auto;
+  margin-top:-2px;
+  width:min(94%, 380px);
+  background:var(--bg-elev);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:10px 12px;
+}
+.dialDetailTop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.dialDetailTitle{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+.dialDetailTime{font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;font-size:30px;line-height:1.05;margin-top:4px;}
+.dialDetailMeta{font-size:12px;color:var(--muted);line-height:1.45;margin-top:2px;}
+.dialDetailInfoRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;}
+.miniInfo{
+  background:none;
+  border:1px solid var(--line-strong);
+  border-radius:18px;
+  color:var(--ink);
+  padding:5px 10px;
+  font-size:11.5px;
+  cursor:pointer;
+  font-family:inherit;
+}
+.miniBtn{
+  background:none;
+  border:1px solid var(--line-strong);
+  border-radius:16px;
+  color:var(--ink);
+  padding:4px 10px;
+  font-size:11px;
+  cursor:pointer;
+  font-family:inherit;
+}
+.infoTip{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted);}
 
 /* ── High-lat badge ── */
 .hlBadge{
