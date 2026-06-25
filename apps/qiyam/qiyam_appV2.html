@@ -254,6 +254,7 @@ function NightDial({ night, nowFrac, qibla, dark, selectedFrac, onScrub }) {
           <stop offset="0%" stopColor={dark?"rgba(100,120,220,0.08)":"rgba(80,80,160,0.05)"}/>
           <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
         </radialGradient>
+        <path id="optLabelPath" d={arc(optFrac,1,R-SW/2-16)} />
       </defs>
 
       {/* ── Decorative outer + inner rings ── */}
@@ -390,18 +391,9 @@ function NightDial({ night, nowFrac, qibla, dark, selectedFrac, onScrub }) {
       })}
 
       {/* ── Optimistic label ── */}
-      {(()=>{
-        const LR=R-SW/2-28;
-        const [lx,ly]=pt(optFrac,LR);
-        const ang=A0+SP*optFrac;
-        const cosA=Math.cos(toRad(ang));
-        const anchor=cosA<-0.18?"end":cosA>0.18?"start":"middle";
-        return (
-          <g>
-            <text x={lx} y={ly} textAnchor={anchor} className="optLbl">Optimistic ⓘ</text>
-          </g>
-        );
-      })()}
+      <text className="optLblPath">
+        <textPath href="#optLabelPath" startOffset="32%">Optimistic ⓘ</textPath>
+      </text>
 
       {/* ── Endpoint labels: Maghrib & Fajr ── */}
       {(()=>{
@@ -484,43 +476,64 @@ function QiyamV2() {
 
   useEffect(()=>{
     let done=false;
-    const fallback = setTimeout(() => {
-      if (!done && !coords) {
-        const c = CITIES[0];
-        setCoords({ lat: c.lat, lng: c.lng });
-        setLabel(`${c.name} (default)`);
-        setLocationTz(c.tz);
-        setLocState("manual");
+    const useIP = async () => {
+      const sources = [
+        async () => {
+          const r = await fetch("https://ipwho.is/");
+          const j = await r.json();
+          if (j && j.success && j.latitude != null) {
+            return { lat: j.latitude, lng: j.longitude, city: j.city, country: j.country, tz: j.timezone && j.timezone.id };
+          }
+          return null;
+        },
+        async () => {
+          const r = await fetch("https://ipapi.co/json/");
+          const j = await r.json();
+          if (j && j.latitude != null) {
+            return { lat: j.latitude, lng: j.longitude, city: j.city, country: j.country_name, tz: j.timezone };
+          }
+          return null;
+        },
+      ];
+
+      for (const src of sources) {
+        if (done) return;
+        try {
+          const j = await src();
+          if (j && j.lat != null) {
+            done = true;
+            setCoords({ lat: j.lat, lng: j.lng });
+            setLabel(j.city ? `${j.city}${j.country ? ", " + j.country : ""}` : "Approx. location");
+            if (j.tz) setLocationTz(j.tz);
+            setLocState("ok");
+            return;
+          }
+        } catch (_) {}
       }
-    }, 12000);
-    const useIP=()=>{
-      fetch("https://ipapi.co/json/").then(r=>r.json()).then(j=>{
-        if(done)return;
-        if(j&&j.latitude!=null){
-          done = true;
-          setCoords({lat:j.latitude,lng:j.longitude});
-          setLabel(j.city?`${j.city}${j.country_name?", "+j.country_name:""}`:"Approx. location");
-          if(j.timezone)setLocationTz(j.timezone);
-          setLocState("ok");
-        } else setLocState("manual");
-      }).catch(()=>{if(!done)setLocState("manual");});
+
+      if (!done) {
+        setLocState("manual");
+        setLabel("Set location");
+      }
     };
+
     if(navigator.geolocation){
       navigator.geolocation.getCurrentPosition(
         pos=>{
           if(done)return; done=true;
           setCoords({lat:pos.coords.latitude,lng:pos.coords.longitude});
+          setLocationTz(Intl.DateTimeFormat().resolvedOptions().timeZone || null);
           setLabel("Your location"); setLocState("ok");
           fetch("https://ipapi.co/json/").then(r=>r.json()).then(j=>{
             if(j&&j.city)setLabel(`${j.city}${j.country_name?", "+j.country_name:""}`);
             if(j&&j.timezone)setLocationTz(j.timezone);
           }).catch(()=>{});
         },
-        ()=>useIP(), {timeout:8000, maximumAge:600000}
+        ()=>useIP(), {timeout:12000, maximumAge:0, enableHighAccuracy:true}
       );
-      setTimeout(()=>{if(!coords&&!done)useIP();},9000);
+      setTimeout(()=>{if(!done)useIP();},12500);
     } else useIP();
-    return ()=>{done=true; clearTimeout(fallback);};
+    return ()=>{done=true;};
     // eslint-disable-next-line
   },[]);
 
@@ -540,6 +553,25 @@ function QiyamV2() {
     if (DOE && typeof DOE.requestPermission === "function") {
       DOE.requestPermission().then((s) => { if (s === "granted") start(); }).catch(() => {});
     } else start();
+  }, []);
+
+  const detectMyLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocState("manual");
+      return;
+    }
+    setLocState("detecting");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLabel("Your location");
+        setLocationTz(Intl.DateTimeFormat().resolvedOptions().timeZone || null);
+        setLocState("ok");
+        setShowSettings(false);
+      },
+      () => setLocState("manual"),
+      { timeout: 12000, maximumAge: 0, enableHighAccuracy: true }
+    );
   }, []);
 
   const view = useMemo(()=>{
@@ -614,7 +646,7 @@ function QiyamV2() {
   }, [night, live, selectedFrac]);
 
   const clockStr=now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,...(locationTz?{timeZone:locationTz}:{})});
-  const clockMain=clockStr.slice(0,5);
+  const clockMain=(selectedFrac!=null && inspect) ? inspect.time : clockStr.slice(0,5);
 
   const planTahajjud=()=>{
     if(!night)return;
@@ -693,7 +725,12 @@ function QiyamV2() {
             {/* Center overlay: time + phase */}
             <div className="centerOverlay">
               <div className="bigClock">{clockMain}</div>
-              {live && live.inNight ? (
+              {selectedFrac!=null && inspect ? (
+                <>
+                  <div className="phaseBadge" style={{color:"var(--indigo)"}}>Dial Focus</div>
+                  <div className="countdownTxt">{inspect.segment} · nearest {inspect.nearest} · <b>{inspect.minsToFajr}m</b> to Fajr</div>
+                </>
+              ) : live && live.inNight ? (
                 <>
                   <div className="phaseBadge" style={{color:live.phaseColor}}>{live.phaseName}</div>
                   {live.next&&(
@@ -715,24 +752,13 @@ function QiyamV2() {
                 : <button className="compassBtn" onClick={enableCompass}>🧭 Enable compass</button>}
             </div>
 
-            <div className="dialDetail">
-              <div className="dialDetailTop">
-                <span className="dialDetailTitle">{selectedFrac!=null?"Dial selection":"Live dial"}</span>
-                {selectedFrac!=null && <button className="miniBtn" onClick={()=>setSelectedFrac(null)}>Back to live</button>}
-              </div>
-              {inspect ? (
-                <>
-                  <div className="dialDetailTime">{inspect.time}</div>
-                  <div className="dialDetailMeta">{inspect.segment} · nearest {inspect.nearest} · {inspect.minsToFajr}m to Fajr</div>
-                </>
-              ) : <div className="dialDetailMeta">Tap or drag on the dial to inspect any point of the night.</div>}
-              <div className="dialDetailInfoRow">
-                <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="tahajjud"?"":"tahajjud")}>✨ Tahajjud ⓘ</button>
-                <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="optimistic"?"":"optimistic")}>Optimistic ⓘ</button>
-              </div>
-              {infoTip==="tahajjud" && <div className="infoTip">Tahajjud in the last third is the recommended and most beloved time for night prayer.</div>}
-              {infoTip==="optimistic" && <div className="infoTip">Optimistic is a personal practical window: wake around Fajr−45m and continue directly into Fajr.</div>}
+            <div className="dialInfoPills">
+              {selectedFrac!=null && <button className="miniBtn" onClick={()=>setSelectedFrac(null)}>Back to live</button>}
+              <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="tahajjud"?"":"tahajjud")}>✨ Tahajjud ⓘ</button>
+              <button className="miniInfo" onClick={()=>setInfoTip(infoTip==="optimistic"?"":"optimistic")}>Optimistic ⓘ</button>
             </div>
+            {infoTip==="tahajjud" && <div className="inlineTip">Tahajjud in the last third is the recommended and most beloved time for night prayer.</div>}
+            {infoTip==="optimistic" && <div className="inlineTip">Optimistic is a personal practical window: wake around Fajr−45m and continue directly into Fajr.</div>}
           </div>
         ) : (
           <div className="dialPlaceholder">
@@ -786,6 +812,7 @@ function QiyamV2() {
       {showSettings&&(
         <BottomSheet title="Settings & Location" onClose={()=>setShowSettings(false)}>
           <div className="settingsBody">
+            <button className="ghostBtn" onClick={detectMyLocation}>Use my current location</button>
             <label className="setRow">
               <span>Plan a date</span>
               <input type="date" className="setInp"
@@ -823,7 +850,7 @@ function QiyamV2() {
                 <input className="setInp sm" placeholder="lng" value={manualLng} onChange={e=>setManualLng(e.target.value)}/>
                 <button className="ghostBtn sm" onClick={()=>{
                   const la=parseFloat(manualLat),ln=parseFloat(manualLng);
-                  if(!isNaN(la)&&!isNaN(ln)){setCoords({lat:la,lng:ln});setLabel("Custom");setShowSettings(false);}
+                  if(!isNaN(la)&&!isNaN(ln)){setCoords({lat:la,lng:ln});setLabel("Custom");setLocationTz(null);setShowSettings(false);}
                 }}>Set</button>
               </div>
             </div>
@@ -967,20 +994,7 @@ const CSS = `
   white-space:nowrap;
 }
 
-.dialDetail{
-  margin:0 auto;
-  margin-top:-2px;
-  width:min(94%, 380px);
-  background:var(--bg-elev);
-  border:1px solid var(--line);
-  border-radius:14px;
-  padding:10px 12px;
-}
-.dialDetailTop{display:flex;align-items:center;justify-content:space-between;gap:8px;}
-.dialDetailTitle{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;}
-.dialDetailTime{font-family:'Cormorant Garamond','Hoefler Text',Garamond,Georgia,serif;font-size:30px;line-height:1.05;margin-top:4px;}
-.dialDetailMeta{font-size:12px;color:var(--muted);line-height:1.45;margin-top:2px;}
-.dialDetailInfoRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;}
+.dialInfoPills{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:4px;}
 .miniInfo{
   background:none;
   border:1px solid var(--line-strong);
@@ -1001,7 +1015,7 @@ const CSS = `
   cursor:pointer;
   font-family:inherit;
 }
-.infoTip{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted);}
+.inlineTip{margin:8px auto 0;max-width:92%;text-align:center;font-size:12px;line-height:1.45;color:var(--muted);}
 
 /* ── High-lat badge ── */
 .hlBadge{
@@ -1106,7 +1120,7 @@ const CSS = `
 .phaseTime{fill:var(--muted);font-size:10px;font-family:'Avenir Next',system-ui,sans-serif;opacity:.7;}
 .phaseHigh{fill:var(--amber);font-size:11.5px;font-weight:700;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.05em;paint-order:stroke fill;stroke:var(--bg);stroke-width:5px;}
 .phaseHighTime{fill:var(--amber);font-size:11px;font-family:'Avenir Next',system-ui,sans-serif;font-weight:600;paint-order:stroke fill;stroke:var(--bg);stroke-width:4px;}
-.optLbl{fill:var(--amber);font-size:9px;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.04em;opacity:.8;}
+.optLblPath{fill:var(--amber);font-size:10px;font-family:'Avenir Next',system-ui,sans-serif;letter-spacing:.05em;opacity:.95;font-weight:700;}
 .endLbl{fill:var(--muted);font-size:10px;letter-spacing:.05em;font-family:'Avenir Next',system-ui,sans-serif;text-transform:uppercase;}
 .endTime{fill:var(--ink);font-size:13px;font-weight:700;font-family:'Cormorant Garamond',Georgia,serif;letter-spacing:.5px;}
 .nightLenLbl{fill:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-family:'Avenir Next',system-ui,sans-serif;}
