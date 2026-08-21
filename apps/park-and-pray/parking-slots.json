@@ -1,0 +1,28 @@
+{
+  "siteName": "Park & Pray",
+  "communityName": "Upplands Väsby community",
+  "timeZone": "Europe/Stockholm",
+  "bookingOpensMinutesBeforePrayer": 45,
+  "bookingClosesMinutesAfterPrayer": 60,
+  "fridayPrayer": { "replacePrayerId": "dhuhr", "name": "Jumu'ah" },
+  "mapEnabled": true,
+  "prayers": [
+    { "id": "fajr", "name": "Fajr", "time": "05:30" },
+    { "id": "dhuhr", "name": "Dhuhr", "time": "13:30" },
+    { "id": "asr", "name": "Asr", "time": "17:30" },
+    { "id": "maghrib", "name": "Maghrib", "time": "20:15" },
+    { "id": "isha", "name": "Isha", "time": "21:45" }
+  ],
+  "slots": [
+    {
+      "id": "P1",
+      "label": "Parking # 1392-3855",
+      "description": "Please only reserve this parking slot for the duration of your prayer.",
+      "image": "parking-slot-1392-3855.jpg",
+      "mapEnabled": true,
+      "mapAddress": "Hammarbyvägen 62, 194 36 Upplands Väsby, Sweden",
+      "mapUrl": "https://maps.app.goo.gl/3Kkh2gv4g8XcT6eL9",
+      "enabled": true
+    }
+  ]
+}
