@@ -2,16 +2,16 @@
   "siteName": "Park & Pray",
   "communityName": "Upplands Väsby community",
   "timeZone": "Europe/Stockholm",
-  "bookingOpensMinutesBeforePrayer": 45,
-  "bookingClosesMinutesAfterPrayer": 60,
+  "bookingPaddingMinutesBefore": 45,
+  "bookingPaddingMinutesAfter": 60,
   "fridayPrayer": { "replacePrayerId": "dhuhr", "name": "Jumu'ah" },
   "mapEnabled": true,
   "prayers": [
-    { "id": "fajr", "name": "Fajr", "time": "05:30" },
-    { "id": "dhuhr", "name": "Dhuhr", "time": "13:30" },
-    { "id": "asr", "name": "Asr", "time": "17:30" },
-    { "id": "maghrib", "name": "Maghrib", "time": "20:15" },
-    { "id": "isha", "name": "Isha", "time": "21:45" }
+    { "id": "fajr", "name": "Fajr", "startTime": "05:30", "endTime": "06:00" },
+    { "id": "dhuhr", "name": "Dhuhr", "startTime": "13:30", "endTime": "15:30" },
+    { "id": "asr", "name": "Asr", "startTime": "17:30", "endTime": "18:00" },
+    { "id": "maghrib", "name": "Maghrib", "startTime": "20:15", "endTime": "20:45" },
+    { "id": "isha", "name": "Isha", "startTime": "21:45", "endTime": "22:15" }
   ],
   "slots": [
     {

@@ -14,6 +14,7 @@ const elements = {
   todayDate: document.getElementById("today-date"),
   communityName: document.getElementById("community-name"),
   prayerTabs: document.getElementById("prayer-tabs"),
+  prayerDisclaimer: document.getElementById("prayer-disclaimer"),
   availability: document.getElementById("availability"),
   slotList: document.getElementById("slot-list"),
   message: document.getElementById("message"),
@@ -103,8 +104,9 @@ function localMinuteOfDay() {
   return Number(parts.hour) * 60 + Number(parts.minute);
 }
 
-function formatTime(time) {
-  return time;
+function minutesFromTime(time) {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
 }
 
 function safeImagePath(value) {
@@ -127,11 +129,14 @@ function mapUrlFor(slot) {
 }
 
 function isPrayerOpen(prayer) {
-  const [hour, minute] = prayer.time.split(":").map(Number);
-  const prayerMinute = hour * 60 + minute;
+  const startMinute = minutesFromTime(prayer.startTime);
+  let endMinute = minutesFromTime(prayer.endTime);
+  if (endMinute < startMinute) endMinute += 24 * 60;
+  const bookingStart = startMinute - state.config.bookingPaddingMinutesBefore;
+  const bookingEnd = endMinute + state.config.bookingPaddingMinutesAfter;
   const currentMinute = localMinuteOfDay();
-  return currentMinute >= prayerMinute - state.config.bookingOpensMinutesBeforePrayer
-    && currentMinute <= prayerMinute + state.config.bookingClosesMinutesAfterPrayer;
+  return [currentMinute - 24 * 60, currentMinute, currentMinute + 24 * 60]
+    .some((minute) => minute >= bookingStart && minute <= bookingEnd);
 }
 
 function currentPrayer() {
@@ -143,12 +148,14 @@ function validateConfig(config) {
     throw new Error("The parking configuration is incomplete.");
   }
   const prayerIds = new Set();
-  if (!Number.isFinite(config.bookingOpensMinutesBeforePrayer) || config.bookingOpensMinutesBeforePrayer < 0
-    || !Number.isFinite(config.bookingClosesMinutesAfterPrayer) || config.bookingClosesMinutesAfterPrayer < 0) {
+  if (!Number.isFinite(config.bookingPaddingMinutesBefore) || config.bookingPaddingMinutesBefore < 0
+    || !Number.isFinite(config.bookingPaddingMinutesAfter) || config.bookingPaddingMinutesAfter < 0) {
     throw new Error("The prayer booking window is invalid.");
   }
+  const timePattern = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
   config.prayers.forEach((prayer) => {
-    if (!prayer.id || !prayer.name || !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(prayer.time) || prayerIds.has(prayer.id)) {
+    if (!prayer.id || !prayer.name || !timePattern.test(prayer.startTime) || !timePattern.test(prayer.endTime)
+      || prayer.startTime === prayer.endTime || prayerIds.has(prayer.id)) {
       throw new Error("A prayer entry is invalid or duplicated.");
     }
     prayerIds.add(prayer.id);
@@ -164,14 +171,16 @@ function validateConfig(config) {
 
 function pruneReservations() {
   const now = Date.now();
-  state.reservations = state.reservations
+  const previousReservations = JSON.stringify(state.reservations);
+  const activeReservations = state.reservations
     .map((reservation) => {
       if (reservation.expiresAt) return reservation;
       const createdTime = Date.parse(reservation.createdAt);
       return { ...reservation, expiresAt: new Date(createdTime + RESERVATION_DURATION_MS).toISOString() };
     })
     .filter((reservation) => Number.isFinite(Date.parse(reservation.expiresAt)) && Date.parse(reservation.expiresAt) > now);
-  writeStorage(STORAGE_KEY, state.reservations);
+  state.reservations = activeReservations;
+  if (JSON.stringify(activeReservations) !== previousReservations) writeStorage(STORAGE_KEY, activeReservations);
 }
 
 function reservationFor(slotId) {
@@ -182,8 +191,21 @@ function reservationForPrayer() {
   return state.reservations.find((reservation) => Date.parse(reservation.expiresAt) > Date.now());
 }
 
-function remainingMinutes(reservation) {
-  return Math.max(1, Math.ceil((Date.parse(reservation.expiresAt) - Date.now()) / 60000));
+function remainingTime(reservation) {
+  const totalSeconds = Math.max(0, Math.ceil((Date.parse(reservation.expiresAt) - Date.now()) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function releaseTime(reservation) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: state.config.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(reservation.expiresAt));
 }
 
 function renderPrayers() {
@@ -193,7 +215,7 @@ function renderPrayers() {
     const active = prayer.id === openPrayer?.id;
     const disabled = !active;
     return `<button class="prayer-tab${active ? " active" : ""}" type="button" role="tab" data-prayer-id="${escapeHtml(prayer.id)}" aria-selected="${active}" ${disabled ? "disabled" : ""}>
-      <strong>${escapeHtml(displayPrayerName(prayer))}</strong><span class="prayer-time">${escapeHtml(formatTime(prayer.time))}</span>
+      <strong>${escapeHtml(displayPrayerName(prayer))}</strong>
     </button>`;
   }).join("");
 }
@@ -208,7 +230,7 @@ function renderSlots() {
     const saved = reservationFor(slot.id);
     const enabled = slot.enabled !== false;
     const className = saved ? "slot-card saved" : enabled ? "slot-card" : "slot-card disabled";
-    const status = saved ? `${remainingMinutes(saved)} min left` : enabled ? "Listed" : "Unavailable";
+    const status = saved ? "Reserved" : enabled ? "Listed" : "Unavailable";
     const statusClass = saved || !enabled ? "status unavailable" : "status";
     const imagePath = safeImagePath(slot.image);
     const mapUrl = mapUrlFor(slot);
@@ -217,6 +239,9 @@ function renderSlots() {
       : `<div class="slot-photo image-missing" aria-label="No parking photo added"><span>${escapeHtml(slot.id)}</span></div>`;
     const mapAction = mapUrl
       ? `<a class="map-button" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Open directions to ${escapeHtml(slot.label)}">Directions</a>`
+      : "";
+    const releaseTimer = saved
+      ? `<div class="release-timer"><strong>Releases in</strong><span>${remainingTime(saved)}</span><small>at ${releaseTime(saved)}</small></div>`
       : "";
     let action;
     if (saved) {
@@ -229,6 +254,7 @@ function renderSlots() {
       <div class="slot-copy">
         <div class="slot-heading"><h3>${escapeHtml(slot.label)}</h3><span class="${statusClass}">${status}</span></div>
         <p>${escapeHtml(slot.description || "Community parking space")}</p>
+        ${releaseTimer}
       </div>
       <div class="slot-actions">${mapAction}${action}</div>
     </article>`;
@@ -263,7 +289,7 @@ function openBooking(slotId) {
   if (!slot || !prayer || !isPrayerOpen(prayer) || reservationForPrayer()) return;
   const contact = readStorage(CONTACT_KEY, {});
   elements.bookingSlotId.value = slot.id;
-  elements.bookingPrayer.textContent = `${displayPrayerName(prayer)} at ${formatTime(prayer.time)}`;
+  elements.bookingPrayer.textContent = displayPrayerName(prayer);
   elements.bookingTitle.textContent = `Save ${slot.label}`;
   elements.memberName.value = contact.name || "";
   elements.memberPhone.value = contact.phone || "";
@@ -368,6 +394,6 @@ start();
 window.setInterval(() => {
   const previousCount = state.reservations.length;
   pruneReservations();
-  if (state.config) render();
+  if (state.config) renderSlots();
   if (previousCount > state.reservations.length) showMessage("Your 1-hour parking reservation has ended.", false);
-}, 60000);
+}, 1000);
