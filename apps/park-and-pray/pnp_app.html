@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#245744">
   <meta name="description" content="Reserve community parking for today's prayer.">
   <title>Park &amp; Pray</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
   <header class="topbar">
@@ -30,7 +30,7 @@
       <div class="parking-rules">
         <strong>Parking Rules</strong>
         <ul>
-          <li>Each reservation lasts exactly 1 hour.</li>
+          <li>Reservations last up to 1 hour and end with the prayer window.</li>
           <li>Use the space only while attending prayer.</li>
           <li>Availability is shared live. Your name and mobile number stay on this phone.</li>
         </ul>
@@ -42,7 +42,7 @@
         <span class="step">1</span>
         <h2 id="prayer-title">Choose prayer</h2>
       </div>
-      <p class="prayer-disclaimer" id="prayer-disclaimer">Booking includes a short window before and after each prayer.</p>
+      <p class="prayer-disclaimer" id="prayer-disclaimer">Today's Asr, Maghrib and Isha availability follows local sunset.</p>
       <div class="prayer-tabs" id="prayer-tabs" role="tablist" aria-label="Today's prayers"></div>
     </section>
 
@@ -69,7 +69,7 @@
       <button class="close-button" id="close-booking" type="button" aria-label="Close">&times;</button>
       <p class="eyebrow" id="booking-prayer"></p>
       <h2 id="booking-title">Save parking space</h2>
-      <p class="sheet-copy">This parking reservation expires automatically after 1 hour. Your details stay on this phone.</p>
+      <p class="sheet-copy">This reservation expires after 1 hour or when the prayer window ends. Your details stay on this phone.</p>
       <form id="booking-form">
         <input type="hidden" id="booking-slot-id">
         <label for="member-name">Your name</label>
@@ -77,13 +77,13 @@
         <label for="member-phone">Mobile number</label>
         <input id="member-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="30" required>
         <p class="form-error" id="form-error" hidden></p>
-        <button class="confirm-button" type="submit">Reserve for 1 hour</button>
+        <button class="confirm-button" type="submit">Reserve parking</button>
         <p class="privacy-note">You can release the space early from this phone.</p>
       </form>
     </section>
   </div>
 
   <noscript>This page needs JavaScript enabled to manage parking reservations.</noscript>
-  <script src="app.js?v=2" defer></script>
+  <script src="app.js?v=7" defer></script>
 </body>
 </html>

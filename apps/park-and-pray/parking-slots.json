@@ -3,17 +3,25 @@
   "communityName": "Upplands Väsby community",
   "timeZone": "Europe/Stockholm",
   "apiUrl": "https://park-and-pray-api.usman-afzal-ms.workers.dev",
-  "testMode": true,
-  "bookingPaddingMinutesBefore": 45,
-  "bookingPaddingMinutesAfter": 60,
-  "fridayPrayer": { "replacePrayerId": "dhuhr", "name": "Jumu'ah" },
+  "testMode": false,
+  "sunLocation": { "latitude": 59.5268483, "longitude": 17.9173712 },
+  "scheduleRules": {
+    "asrStartsMinutesAfterDhuhr": 5,
+    "asrEndsMinutesBeforeSunset": 20,
+    "maghribStartsMinutesBeforeSunset": 15,
+    "ishaStartsMinutesAfterSunset": 60
+  },
+  "fridaySchedule": [
+    { "id": "jumuah-first", "name": "Jumu'ah", "turn": "First Turn", "startTime": "11:30", "endTime": "13:15", "reservedFor": "Imam" },
+    { "id": "jumuah-second", "name": "Jumu'ah", "turn": "Second Turn", "startTime": "13:20", "endTime": "14:00" }
+  ],
   "mapEnabled": true,
   "prayers": [
-    { "id": "fajr", "name": "Fajr", "startTime": "05:30", "endTime": "06:00" },
-    { "id": "dhuhr", "name": "Dhuhr", "startTime": "13:30", "endTime": "15:30" },
-    { "id": "asr", "name": "Asr", "startTime": "17:30", "endTime": "18:00" },
-    { "id": "maghrib", "name": "Maghrib", "startTime": "20:15", "endTime": "20:45" },
-    { "id": "isha", "name": "Isha", "startTime": "21:45", "endTime": "22:15" }
+    { "id": "fajr", "name": "Fajr", "startTime": "00:30", "endTime": "08:00" },
+    { "id": "dhuhr", "name": "Dhuhr", "startTime": "11:30", "endTime": "14:00" },
+    { "id": "asr", "name": "Asr" },
+    { "id": "maghrib", "name": "Maghrib" },
+    { "id": "isha", "name": "Isha", "endTime": "23:45" }
   ],
   "slots": [
     {

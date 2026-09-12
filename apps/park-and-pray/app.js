@@ -10,6 +10,7 @@ const state = {
   reservations: readStorage(STORAGE_KEY, []),
   sharedReservation: null,
   apiReady: false,
+  prayerClockKey: null,
 };
 
 const elements = {
@@ -90,23 +91,34 @@ function localParts(date) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(date);
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
+function fridayTestMinute() {
+  if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) return null;
+  const value = new URLSearchParams(window.location.search).get("testFriday");
+  return /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value || "") ? minutesFromTime(value) : null;
+}
+
 function isFriday() {
+  if (fridayTestMinute() !== null) return true;
   return new Intl.DateTimeFormat("en", { timeZone: state.config.timeZone, weekday: "long" }).format(new Date()) === "Friday";
 }
 
 function displayPrayerName(prayer) {
-  const fridayPrayer = state.config.fridayPrayer;
-  return isFriday() && fridayPrayer && prayer.id === fridayPrayer.replacePrayerId
-    ? fridayPrayer.name
-    : prayer.name;
+  return prayer.name;
 }
 
 function renderToday() {
+  const testMinute = fridayTestMinute();
+  if (testMinute !== null) {
+    elements.todayDate.textContent = `Friday test, ${String(Math.floor(testMinute / 60)).padStart(2, "0")}:${String(testMinute % 60).padStart(2, "0")}`;
+    elements.todayDate.removeAttribute("datetime");
+    return;
+  }
   const now = new Date();
   const dateParts = new Intl.DateTimeFormat("en-GB", {
     timeZone: state.config.timeZone,
@@ -125,13 +137,150 @@ function localDateKey() {
 }
 
 function localMinuteOfDay() {
+  const testMinute = fridayTestMinute();
+  if (testMinute !== null) return testMinute;
   const parts = localParts(new Date());
   return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
+function localSecondOfDay() {
+  const testMinute = fridayTestMinute();
+  if (testMinute !== null) return testMinute * 60;
+  const parts = localParts(new Date());
+  return Number(parts.hour) * 60 * 60 + Number(parts.minute) * 60 + Number(parts.second);
 }
 
 function minutesFromTime(time) {
   const [hour, minute] = time.split(":").map(Number);
   return hour * 60 + minute;
+}
+
+function degreesToRadians(degrees) {
+  return degrees * Math.PI / 180;
+}
+
+function radiansToDegrees(radians) {
+  return radians * 180 / Math.PI;
+}
+
+function normalizeAngle(angle) {
+  return ((angle % 360) + 360) % 360;
+}
+
+function normalizeHour(hour) {
+  return ((hour % 24) + 24) % 24;
+}
+
+function julianDate(year, month, day) {
+  let adjustedYear = year;
+  let adjustedMonth = month;
+  if (adjustedMonth <= 2) {
+    adjustedYear -= 1;
+    adjustedMonth += 12;
+  }
+  const century = Math.floor(adjustedYear / 100);
+  const correction = 2 - century + Math.floor(century / 4);
+  return Math.floor(365.25 * (adjustedYear + 4716))
+    + Math.floor(30.6001 * (adjustedMonth + 1)) + day + correction - 1524.5;
+}
+
+function sunPosition(julianDay) {
+  const daysSinceEpoch = julianDay - 2451545;
+  const meanAnomaly = normalizeAngle(357.529 + 0.98560028 * daysSinceEpoch);
+  const meanLongitude = normalizeAngle(280.459 + 0.98564736 * daysSinceEpoch);
+  const longitude = normalizeAngle(meanLongitude
+    + 1.915 * Math.sin(degreesToRadians(meanAnomaly))
+    + 0.02 * Math.sin(degreesToRadians(2 * meanAnomaly)));
+  const obliquity = 23.439 - 0.00000036 * daysSinceEpoch;
+  const rightAscension = radiansToDegrees(Math.atan2(
+    Math.cos(degreesToRadians(obliquity)) * Math.sin(degreesToRadians(longitude)),
+    Math.cos(degreesToRadians(longitude)),
+  )) / 15;
+  const declination = radiansToDegrees(Math.asin(
+    Math.sin(degreesToRadians(obliquity)) * Math.sin(degreesToRadians(longitude)),
+  ));
+  return { declination, equationOfTime: meanLongitude / 15 - normalizeHour(rightAscension) };
+}
+
+function timeZoneOffsetHours(year, month, day) {
+  const utcNoon = new Date(Date.UTC(year, month - 1, day, 12));
+  const parts = localParts(utcNoon);
+  const localAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+  );
+  return (localAsUtc - utcNoon.getTime()) / (60 * 60 * 1000);
+}
+
+function sunsetMinuteForToday() {
+  const today = localParts(new Date());
+  const year = Number(today.year);
+  const month = Number(today.month);
+  const day = Number(today.day);
+  const { latitude, longitude } = state.config.sunLocation;
+  const julianDay = julianDate(year, month, day) - longitude / (15 * 24);
+  const approximateTime = 18 / 24;
+  const position = sunPosition(julianDay + approximateTime);
+  const solarNoon = normalizeHour(12 - position.equationOfTime);
+  const angle = degreesToRadians(0.833);
+  const declination = degreesToRadians(position.declination);
+  const latitudeRadians = degreesToRadians(latitude);
+  const cosine = (-Math.sin(angle) - Math.sin(declination) * Math.sin(latitudeRadians))
+    / (Math.cos(declination) * Math.cos(latitudeRadians));
+  if (cosine < -1 || cosine > 1) throw new Error("Sunset could not be calculated for today.");
+  const hourAngle = radiansToDegrees(Math.acos(cosine)) / 15;
+  const localSunsetHour = solarNoon + hourAngle + timeZoneOffsetHours(year, month, day) - longitude / 15;
+  return Math.round(normalizeHour(localSunsetHour) * 60);
+}
+
+function prayerWindow(prayer) {
+  const rules = state.config.scheduleRules;
+  const sunsetMinute = sunsetMinuteForToday();
+  const dhuhr = state.config.prayers.find((item) => item.id === "dhuhr");
+
+  if (prayer.id === "asr") {
+    return {
+      startMinute: minutesFromTime(dhuhr.endTime) + rules.asrStartsMinutesAfterDhuhr,
+      endMinute: sunsetMinute - rules.asrEndsMinutesBeforeSunset,
+    };
+  }
+  if (prayer.id === "maghrib") {
+    return {
+      startMinute: sunsetMinute - rules.maghribStartsMinutesBeforeSunset,
+      endMinute: sunsetMinute + rules.ishaStartsMinutesAfterSunset,
+    };
+  }
+  if (prayer.id === "isha") {
+    return {
+      startMinute: sunsetMinute + rules.ishaStartsMinutesAfterSunset,
+      endMinute: minutesFromTime(prayer.endTime),
+    };
+  }
+  return {
+    startMinute: minutesFromTime(prayer.startTime),
+    endMinute: minutesFromTime(prayer.endTime),
+  };
+}
+
+function reservationDurationSeconds(prayer) {
+  let endSecond = prayerWindow(prayer).endMinute * 60;
+  const currentSecond = localSecondOfDay();
+  if (endSecond <= currentSecond) endSecond += 24 * 60 * 60;
+  return Math.max(1, Math.min(RESERVATION_DURATION_MS / 1000, endSecond - currentSecond));
+}
+
+function scheduledPrayers() {
+  if (!isFriday()) return state.config.prayers;
+  return state.config.prayers.flatMap((prayer) => (
+    prayer.id === "dhuhr" ? state.config.fridaySchedule : [prayer]
+  ));
+}
+
+function prayerById(prayerId) {
+  return scheduledPrayers().find((prayer) => prayer.id === prayerId);
 }
 
 function safeImagePath(value) {
@@ -155,18 +304,39 @@ function mapUrlFor(slot) {
 
 function isPrayerOpen(prayer) {
   if (state.config.testMode === true) return true;
-  const startMinute = minutesFromTime(prayer.startTime);
-  let endMinute = minutesFromTime(prayer.endTime);
+  const window = prayerWindow(prayer);
+  const startMinute = window.startMinute;
+  let endMinute = window.endMinute;
   if (endMinute < startMinute) endMinute += 24 * 60;
-  const bookingStart = startMinute - state.config.bookingPaddingMinutesBefore;
-  const bookingEnd = endMinute + state.config.bookingPaddingMinutesAfter;
   const currentMinute = localMinuteOfDay();
   return [currentMinute - 24 * 60, currentMinute, currentMinute + 24 * 60]
-    .some((minute) => minute >= bookingStart && minute <= bookingEnd);
+    .some((minute) => minute >= startMinute && minute < endMinute);
 }
 
 function currentPrayer() {
-  return state.config.prayers.find(isPrayerOpen) || null;
+  return scheduledPrayers().find(isPrayerOpen) || null;
+}
+
+function displayedPrayer() {
+  const openPrayer = currentPrayer();
+  if (openPrayer) return { prayer: openPrayer, active: true, minutesUntil: 0 };
+
+  const currentMinute = localMinuteOfDay();
+  return scheduledPrayers()
+    .map((prayer) => {
+      let startMinute = prayerWindow(prayer).startMinute;
+      if (startMinute <= currentMinute) startMinute += 24 * 60;
+      return { prayer, active: false, minutesUntil: startMinute - currentMinute };
+    })
+    .sort((first, second) => first.minutesUntil - second.minutesUntil)[0];
+}
+
+function formatDurationMinutes(totalMinutes) {
+  if (totalMinutes < 60) return `${totalMinutes} ${totalMinutes === 1 ? "min" : "mins"}`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const hourText = `${hours} ${hours === 1 ? "hr" : "hrs"}`;
+  return minutes ? `${hourText} ${minutes} ${minutes === 1 ? "min" : "mins"}` : hourText;
 }
 
 function validateConfig(config) {
@@ -174,18 +344,40 @@ function validateConfig(config) {
     throw new Error("The parking configuration is incomplete.");
   }
   const prayerIds = new Set();
-  if (!Number.isFinite(config.bookingPaddingMinutesBefore) || config.bookingPaddingMinutesBefore < 0
-    || !Number.isFinite(config.bookingPaddingMinutesAfter) || config.bookingPaddingMinutesAfter < 0) {
-    throw new Error("The prayer booking window is invalid.");
+  const rules = config.scheduleRules;
+  if (!config.sunLocation || !Number.isFinite(config.sunLocation.latitude) || !Number.isFinite(config.sunLocation.longitude)
+    || !rules || ![rules.asrStartsMinutesAfterDhuhr, rules.asrEndsMinutesBeforeSunset,
+      rules.maghribStartsMinutesBeforeSunset, rules.ishaStartsMinutesAfterSunset]
+      .every((value) => Number.isFinite(value) && value >= 0)) {
+    throw new Error("The calculated prayer schedule is invalid.");
   }
   const timePattern = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+  const fixedTimes = { fajr: ["startTime", "endTime"], dhuhr: ["startTime", "endTime"], isha: ["endTime"] };
   config.prayers.forEach((prayer) => {
-    if (!prayer.id || !prayer.name || !timePattern.test(prayer.startTime) || !timePattern.test(prayer.endTime)
-      || prayer.startTime === prayer.endTime || prayerIds.has(prayer.id)) {
+    const requiredTimes = fixedTimes[prayer.id] || [];
+    if (!prayer.id || !prayer.name || prayerIds.has(prayer.id)
+      || requiredTimes.some((property) => !timePattern.test(prayer[property]))) {
       throw new Error("A prayer entry is invalid or duplicated.");
     }
     prayerIds.add(prayer.id);
   });
+  if (!["fajr", "dhuhr", "asr", "maghrib", "isha"].every((id) => prayerIds.has(id))) {
+    throw new Error("A required prayer is missing.");
+  }
+  const dhuhr = config.prayers.find((prayer) => prayer.id === "dhuhr");
+  if (dhuhr.startTime === dhuhr.endTime) throw new Error("The Dhuhr booking window is invalid.");
+  if (!Array.isArray(config.fridaySchedule) || config.fridaySchedule.length !== 2
+    || config.fridaySchedule.some((turn) => !turn.id || !turn.name || !turn.turn
+      || !timePattern.test(turn.startTime) || !timePattern.test(turn.endTime))) {
+    throw new Error("The Friday parking schedule is invalid.");
+  }
+  const [firstTurn, secondTurn] = config.fridaySchedule;
+  if (firstTurn.reservedFor !== "Imam"
+    || minutesFromTime(firstTurn.startTime) >= minutesFromTime(firstTurn.endTime)
+    || minutesFromTime(firstTurn.endTime) >= minutesFromTime(secondTurn.startTime)
+    || minutesFromTime(secondTurn.startTime) >= minutesFromTime(secondTurn.endTime)) {
+    throw new Error("The Friday parking turns overlap or are out of order.");
+  }
   const slotIds = new Set();
   config.slots.forEach((slot) => {
     if (!slot.id || !slot.label || slotIds.has(slot.id)) throw new Error("A parking slot ID is invalid or duplicated.");
@@ -284,34 +476,58 @@ function updateReleaseTimers() {
 }
 
 function renderPrayers() {
-  const openPrayer = currentPrayer();
-  const selectedPrayer = state.config.prayers.find((prayer) => prayer.id === state.prayerId);
-  state.prayerId = state.config.testMode && selectedPrayer ? selectedPrayer.id : openPrayer?.id || null;
-  elements.prayerTabs.innerHTML = state.config.prayers.map((prayer) => {
-    const active = prayer.id === state.prayerId;
-    const disabled = state.config.testMode !== true && !active;
-    return `<button class="prayer-tab${active ? " active" : ""}" type="button" role="tab" data-prayer-id="${escapeHtml(prayer.id)}" aria-selected="${active}" ${disabled ? "disabled" : ""}>
+  const displayed = displayedPrayer();
+  const fridayTurnsVisible = isFriday()
+    && state.config.fridaySchedule.some((turn) => turn.id === displayed.prayer.id);
+  elements.prayerDisclaimer.textContent = fridayTurnsVisible
+    ? "Jumu'ah parking has two Friday turns."
+    : "Today's Asr, Maghrib and Isha availability follows local sunset.";
+  const prayerStates = fridayTurnsVisible
+    ? state.config.fridaySchedule.map((prayer) => {
+      const active = isPrayerOpen(prayer);
+      let startMinute = prayerWindow(prayer).startMinute;
+      if (startMinute <= localMinuteOfDay()) startMinute += 24 * 60;
+      return { prayer, active, minutesUntil: startMinute - localMinuteOfDay() };
+    })
+    : [displayed];
+  const bookablePrayer = prayerStates.find(({ prayer, active }) => active && !prayer.reservedFor)?.prayer;
+  state.prayerId = bookablePrayer?.id || null;
+  state.prayerClockKey = `${localDateKey()}-${localMinuteOfDay()}`;
+  elements.prayerTabs.classList.toggle("friday-turns", fridayTurnsVisible);
+  elements.prayerTabs.innerHTML = prayerStates.map(({ prayer, active, minutesUntil }) => {
+    const reserved = Boolean(prayer.reservedFor);
+    const stateText = reserved
+      ? `Booked for ${prayer.reservedFor}`
+      : active ? "Active now" : `Coming up in ${formatDurationMinutes(minutesUntil)}`;
+    const status = prayer.turn ? `${prayer.turn} · ${stateText}` : stateText;
+    const className = reserved ? " reserved" : active ? " active" : " upcoming";
+    const bookable = active && !reserved;
+    return `<button class="prayer-tab${className}" type="button" role="tab" data-prayer-id="${escapeHtml(prayer.id)}" aria-selected="${bookable}" ${bookable ? "" : "disabled"}>
       <strong>${escapeHtml(displayPrayerName(prayer))}</strong>
+      <span>${escapeHtml(status)}</span>
     </button>`;
   }).join("");
 }
 
 function renderSlots() {
   const enabledCount = state.config.slots.filter((slot) => slot.enabled !== false).length;
-  const bookingOpen = Boolean(currentPrayer());
+  const prayer = currentPrayer();
+  const imamReserved = prayer?.reservedFor === "Imam";
+  const bookingOpen = Boolean(prayer && !imamReserved);
   const ownReservation = reservationForPrayer();
   const sharedReservation = activeSharedReservation();
   elements.availability.textContent = !state.apiReady
     ? "Connecting..."
-    : sharedReservation ? "Parking reserved" : bookingOpen ? `${enabledCount} available` : "Booking closed";
+    : imamReserved ? "Reserved for Imam"
+      : sharedReservation ? "Parking reserved" : bookingOpen ? `${enabledCount} available` : "Booking closed";
 
   elements.slotList.innerHTML = state.config.slots.map((slot) => {
     const saved = reservationFor(slot.id);
     const shared = sharedReservationFor(slot.id);
     const enabled = slot.enabled !== false;
-    const className = saved ? "slot-card saved" : shared || !enabled ? "slot-card disabled" : "slot-card";
-    const status = shared ? "Reserved" : enabled ? "Available" : "Unavailable";
-    const statusClass = shared || !enabled ? "status unavailable" : "status";
+    const className = saved ? "slot-card saved" : imamReserved || shared || !enabled ? "slot-card disabled" : "slot-card";
+    const status = imamReserved ? "Reserved for Imam" : shared ? "Reserved" : enabled ? "Available" : "Unavailable";
+    const statusClass = imamReserved || shared || !enabled ? "status unavailable" : "status";
     const imagePath = safeImagePath(slot.image);
     const mapUrl = mapUrlFor(slot);
     const photo = imagePath
@@ -324,7 +540,9 @@ function renderSlots() {
       ? `<div class="release-timer" data-expires-at="${escapeHtml(shared.expiresAt)}"><strong>Releases in</strong><span>${remainingTime(shared)}</span><small>at ${releaseTime(shared)}</small></div>`
       : "";
     let action;
-    if (saved) {
+    if (imamReserved) {
+      action = `<button class="action-button" type="button" disabled>Booked for Imam</button>`;
+    } else if (saved) {
       action = `<button class="action-button remove" type="button" data-remove-id="${escapeHtml(saved.id)}">Remove</button>`;
     } else if (shared) {
       action = `<button class="action-button" type="button" disabled>Reserved</button>`;
@@ -369,8 +587,8 @@ function hideMessage() {
 
 function openBooking(slotId) {
   const slot = state.config.slots.find((item) => item.id === slotId);
-  const prayer = state.config.prayers.find((item) => item.id === state.prayerId);
-  if (!slot || !prayer || !isPrayerOpen(prayer) || !state.apiReady || activeSharedReservation()) return;
+  const prayer = prayerById(state.prayerId);
+  if (!slot || !prayer || prayer.reservedFor || !isPrayerOpen(prayer) || !state.apiReady || activeSharedReservation()) return;
   const contact = readStorage(CONTACT_KEY, {});
   elements.bookingSlotId.value = slot.id;
   elements.bookingPrayer.textContent = displayPrayerName(prayer);
@@ -392,8 +610,8 @@ async function saveReservation(event) {
   event.preventDefault();
   const name = elements.memberName.value.trim();
   const phone = elements.memberPhone.value.trim();
-  const prayer = state.config.prayers.find((item) => item.id === state.prayerId);
-  if (!prayer || !isPrayerOpen(prayer)) {
+  const prayer = prayerById(state.prayerId);
+  if (!prayer || prayer.reservedFor || !isPrayerOpen(prayer)) {
     elements.formError.textContent = "The booking window for this prayer has closed.";
     elements.formError.hidden = false;
     return;
@@ -423,7 +641,12 @@ async function saveReservation(event) {
   try {
     const result = await apiRequest("/reserve", {
       method: "POST",
-      body: JSON.stringify({ id: reservation.id, slotId: reservation.slotId, prayerId: reservation.prayerId }),
+      body: JSON.stringify({
+        id: reservation.id,
+        slotId: reservation.slotId,
+        prayerId: reservation.prayerId,
+        durationSeconds: reservationDurationSeconds(prayer),
+      }),
     });
     const localReservation = { ...reservation, ...result.reservation };
     state.sharedReservation = result.reservation;
@@ -435,7 +658,7 @@ async function saveReservation(event) {
     writeStorage(CONTACT_KEY, { name, phone });
     closeBooking();
     render();
-    showMessage("Parking reserved for 1 hour. Other visitors can now see it is unavailable.", false);
+    showMessage("Parking reserved. Other visitors can now see it is unavailable.", false);
   } catch (error) {
     if (error.details?.reservation) state.sharedReservation = error.details.reservation;
     elements.formError.textContent = error.message;
@@ -485,7 +708,7 @@ async function start() {
 elements.prayerTabs.addEventListener("click", (event) => {
   const button = event.target.closest("[data-prayer-id]");
   if (!button || button.disabled) return;
-  const prayer = state.config.prayers.find((item) => item.id === button.dataset.prayerId);
+  const prayer = prayerById(button.dataset.prayerId);
   if (!prayer || !isPrayerOpen(prayer)) return;
   state.prayerId = prayer.id;
   hideMessage();
@@ -510,6 +733,11 @@ window.setInterval(() => {
   const previousCount = state.reservations.length;
   pruneReservations();
   if (!state.config) return;
+  const prayerClockKey = `${localDateKey()}-${localMinuteOfDay()}`;
+  if (prayerClockKey !== state.prayerClockKey) {
+    renderPrayers();
+    renderSlots();
+  }
   if (previousCount > state.reservations.length || (state.sharedReservation && !activeSharedReservation())) {
     state.sharedReservation = null;
     renderSlots();

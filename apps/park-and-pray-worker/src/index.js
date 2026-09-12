@@ -59,6 +59,10 @@ export class ParkingSlot {
       if (!validIdentifier(details.id) || !validIdentifier(details.slotId) || !validIdentifier(details.prayerId)) {
         return jsonResponse({ error: "Reservation details are invalid." }, 400);
       }
+      const durationSeconds = details.durationSeconds ?? RESERVATION_DURATION_MS / 1000;
+      if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > RESERVATION_DURATION_MS / 1000) {
+        return jsonResponse({ error: "Reservation duration is invalid." }, 400);
+      }
 
       const result = await this.storage.transaction(async (transaction) => {
         const existing = await this.activeReservation(transaction);
@@ -70,7 +74,7 @@ export class ParkingSlot {
           slotId: details.slotId,
           prayerId: details.prayerId,
           createdAt: new Date(now).toISOString(),
-          expiresAt: new Date(now + RESERVATION_DURATION_MS).toISOString(),
+          expiresAt: new Date(now + durationSeconds * 1000).toISOString(),
         };
         await transaction.put(RESERVATION_KEY, reservation);
         return { conflict: false, reservation };
