@@ -58,6 +58,7 @@ h1 span { color: var(--accent); font-family: Georgia, serif; font-weight: 500; }
 .parking-rules { margin-top: 12px; padding: 11px 13px; border: 1px solid rgba(215, 168, 78, 0.42); border-radius: 8px; color: #45544e; background: rgba(255, 255, 255, 0.84); font-size: 0.78rem; line-height: 1.45; }
 .parking-rules strong { display: block; margin-bottom: 5px; color: var(--ink); font-size: 0.83rem; }
 .parking-rules ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.parking-rules .important-rule { color: #9a651c; font-weight: 900; }
 .section { padding: 10px 18px 22px; }
 .section-title { min-height: 44px; display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
 .section-title > div { display: flex; align-items: center; gap: 9px; }
@@ -108,7 +109,10 @@ h1 span { color: var(--accent); font-family: Georgia, serif; font-weight: 500; }
 .action-button.remove { border: 1px solid rgba(169, 79, 72, 0.4); color: var(--danger); background: transparent; }
 .action-button:disabled { color: var(--muted); background: #e4e5e1; cursor: not-allowed; }
 .loading { min-height: 120px; display: grid; place-items: center; color: var(--muted); font-size: 0.82rem; }
-footer { padding: 24px 18px 38px; color: var(--muted); text-align: center; font-size: 0.7rem; }
+footer { padding: 24px 18px 38px; display: grid; gap: 5px; color: var(--muted); text-align: center; font-size: 0.7rem; line-height: 1.4; }
+footer strong { color: var(--ink); font-size: 0.76rem; }
+footer .footer-link { margin-bottom: -5px; }
+footer a { color: var(--primary); font-weight: 800; text-underline-offset: 2px; }
 .sheet-backdrop[hidden] { display: none; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; background: rgba(25, 49, 40, 0.48); }
 .booking-sheet { position: relative; width: min(100%, 540px); max-height: calc(100dvh - 12px); padding: 22px 20px max(20px, env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; overflow-y: auto; background: var(--surface); box-shadow: 0 -12px 45px rgba(25, 49, 40, 0.18); animation: sheet-up 180ms ease-out; }
