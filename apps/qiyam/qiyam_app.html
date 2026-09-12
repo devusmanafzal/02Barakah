@@ -590,6 +590,10 @@ function QiyamPlanner() {
 
         <footer className="ft">Times are computed locally on your device. The “Optimistic” suggestion is a personal practical method offered as an aid — not a religious ruling.</footer>
         <footer className="ft" style={{ color: "var(--amber)" }}>Keep in Prayers 🙏 · Usman Afzal</footer>
+        <footer className="ft siteLink">
+          <span>Visit <a href="https://02barakah.com" target="_blank" rel="noopener noreferrer">www.02barakah.com</a></span>
+          <span>for more productive apps.</span>
+        </footer>
       </div>
     </div>
   );
@@ -676,6 +680,8 @@ const CSS = `
 .inp.sm{ width:64px; }
 .advNote{ font-size:11.5px; color:var(--muted); line-height:1.55; margin:2px 0 0; }
 .ft{ text-align:center; font-size:11px; color:var(--muted); line-height:1.55; max-width:330px; margin:6px auto 0; }
+.siteLink{ display:grid; gap:0; }
+.siteLink a{ color:var(--amber); font-weight:700; text-underline-offset:2px; }
 `;
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
