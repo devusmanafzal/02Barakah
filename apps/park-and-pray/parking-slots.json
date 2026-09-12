@@ -2,6 +2,8 @@
   "siteName": "Park & Pray",
   "communityName": "Upplands Väsby community",
   "timeZone": "Europe/Stockholm",
+  "apiUrl": "https://park-and-pray-api.usman-afzal-ms.workers.dev",
+  "testMode": true,
   "bookingPaddingMinutesBefore": 45,
   "bookingPaddingMinutesAfter": 60,
   "fridayPrayer": { "replacePrayerId": "dhuhr", "name": "Jumu'ah" },

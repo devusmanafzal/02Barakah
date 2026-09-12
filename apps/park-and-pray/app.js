@@ -8,6 +8,8 @@ const state = {
   config: null,
   prayerId: null,
   reservations: readStorage(STORAGE_KEY, []),
+  sharedReservation: null,
+  apiReady: false,
 };
 
 const elements = {
@@ -46,6 +48,29 @@ function writeStorage(key, value) {
     showMessage("This browser blocked local storage, so the parking reservation could not be saved.", true);
     return false;
   }
+}
+
+async function apiRequest(path, options = {}) {
+  const configuredUrl = state.config.apiUrl?.trim().replace(/\/$/, "");
+  const localApiUrl = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+    ? "http://localhost:8787"
+    : "";
+  const apiUrl = configuredUrl || localApiUrl;
+  if (!apiUrl) throw new Error("The shared booking service is not configured yet.");
+
+  const response = await fetch(`${apiUrl}${path}`, {
+    ...options,
+    headers: options.body ? { "Content-Type": "application/json", ...options.headers } : options.headers,
+    cache: "no-store",
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(result.error || "The shared booking service could not complete the request.");
+    error.status = response.status;
+    error.details = result;
+    throw error;
+  }
+  return result;
 }
 
 function escapeHtml(value) {
@@ -129,6 +154,7 @@ function mapUrlFor(slot) {
 }
 
 function isPrayerOpen(prayer) {
+  if (state.config.testMode === true) return true;
   const startMinute = minutesFromTime(prayer.startTime);
   let endMinute = minutesFromTime(prayer.endTime);
   if (endMinute < startMinute) endMinute += 24 * 60;
@@ -184,11 +210,53 @@ function pruneReservations() {
 }
 
 function reservationFor(slotId) {
-  return state.reservations.find((reservation) => Date.parse(reservation.expiresAt) > Date.now() && reservation.slotId === slotId);
+  const shared = sharedReservationFor(slotId);
+  if (!shared) return null;
+  return state.reservations.find((reservation) => reservation.id === shared.id) || null;
 }
 
 function reservationForPrayer() {
-  return state.reservations.find((reservation) => Date.parse(reservation.expiresAt) > Date.now());
+  const shared = activeSharedReservation();
+  if (!shared) return null;
+  return state.reservations.find((reservation) => reservation.id === shared.id) || null;
+}
+
+function activeSharedReservation() {
+  return state.sharedReservation && Date.parse(state.sharedReservation.expiresAt) > Date.now()
+    ? state.sharedReservation
+    : null;
+}
+
+function sharedReservationFor(slotId) {
+  const reservation = activeSharedReservation();
+  return reservation?.slotId === slotId ? reservation : null;
+}
+
+async function refreshSharedReservation(showErrors = false) {
+  const previousSharedReservation = JSON.stringify(state.sharedReservation);
+  const previousReservations = JSON.stringify(state.reservations);
+  const wasApiReady = state.apiReady;
+  try {
+    const localId = state.reservations[0]?.id;
+    const result = await apiRequest("/status", {
+      headers: localId ? { "X-Reservation-Id": localId } : undefined,
+    });
+    state.sharedReservation = result.reservation || null;
+    state.apiReady = true;
+
+    const sharedId = state.sharedReservation?.owned ? state.sharedReservation.id : null;
+    const localReservations = state.reservations.filter((reservation) => reservation.id === sharedId);
+    if (localReservations.length !== state.reservations.length) {
+      state.reservations = localReservations;
+      writeStorage(STORAGE_KEY, state.reservations);
+    }
+  } catch (error) {
+    state.apiReady = false;
+    if (showErrors) showMessage(error.message, true);
+  }
+  const reservationChanged = previousSharedReservation !== JSON.stringify(state.sharedReservation)
+    || previousReservations !== JSON.stringify(state.reservations);
+  if (state.config && (reservationChanged || wasApiReady !== state.apiReady)) renderSlots();
 }
 
 function remainingTime(reservation) {
@@ -208,12 +276,20 @@ function releaseTime(reservation) {
   }).format(new Date(reservation.expiresAt));
 }
 
+function updateReleaseTimers() {
+  elements.slotList.querySelectorAll("[data-expires-at]").forEach((timer) => {
+    const countdown = timer.querySelector("span");
+    if (countdown) countdown.textContent = remainingTime({ expiresAt: timer.dataset.expiresAt });
+  });
+}
+
 function renderPrayers() {
   const openPrayer = currentPrayer();
-  state.prayerId = openPrayer ? openPrayer.id : null;
+  const selectedPrayer = state.config.prayers.find((prayer) => prayer.id === state.prayerId);
+  state.prayerId = state.config.testMode && selectedPrayer ? selectedPrayer.id : openPrayer?.id || null;
   elements.prayerTabs.innerHTML = state.config.prayers.map((prayer) => {
-    const active = prayer.id === openPrayer?.id;
-    const disabled = !active;
+    const active = prayer.id === state.prayerId;
+    const disabled = state.config.testMode !== true && !active;
     return `<button class="prayer-tab${active ? " active" : ""}" type="button" role="tab" data-prayer-id="${escapeHtml(prayer.id)}" aria-selected="${active}" ${disabled ? "disabled" : ""}>
       <strong>${escapeHtml(displayPrayerName(prayer))}</strong>
     </button>`;
@@ -224,14 +300,18 @@ function renderSlots() {
   const enabledCount = state.config.slots.filter((slot) => slot.enabled !== false).length;
   const bookingOpen = Boolean(currentPrayer());
   const ownReservation = reservationForPrayer();
-  elements.availability.textContent = ownReservation ? "Parking reserved" : bookingOpen ? `${enabledCount} listed` : "Booking closed";
+  const sharedReservation = activeSharedReservation();
+  elements.availability.textContent = !state.apiReady
+    ? "Connecting..."
+    : sharedReservation ? "Parking reserved" : bookingOpen ? `${enabledCount} available` : "Booking closed";
 
   elements.slotList.innerHTML = state.config.slots.map((slot) => {
     const saved = reservationFor(slot.id);
+    const shared = sharedReservationFor(slot.id);
     const enabled = slot.enabled !== false;
-    const className = saved ? "slot-card saved" : enabled ? "slot-card" : "slot-card disabled";
-    const status = saved ? "Reserved" : enabled ? "Listed" : "Unavailable";
-    const statusClass = saved || !enabled ? "status unavailable" : "status";
+    const className = saved ? "slot-card saved" : shared || !enabled ? "slot-card disabled" : "slot-card";
+    const status = shared ? "Reserved" : enabled ? "Available" : "Unavailable";
+    const statusClass = shared || !enabled ? "status unavailable" : "status";
     const imagePath = safeImagePath(slot.image);
     const mapUrl = mapUrlFor(slot);
     const photo = imagePath
@@ -240,14 +320,18 @@ function renderSlots() {
     const mapAction = mapUrl
       ? `<a class="map-button" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Open directions to ${escapeHtml(slot.label)}">Directions</a>`
       : "";
-    const releaseTimer = saved
-      ? `<div class="release-timer"><strong>Releases in</strong><span>${remainingTime(saved)}</span><small>at ${releaseTime(saved)}</small></div>`
+    const releaseTimer = shared
+      ? `<div class="release-timer" data-expires-at="${escapeHtml(shared.expiresAt)}"><strong>Releases in</strong><span>${remainingTime(shared)}</span><small>at ${releaseTime(shared)}</small></div>`
       : "";
     let action;
     if (saved) {
       action = `<button class="action-button remove" type="button" data-remove-id="${escapeHtml(saved.id)}">Remove</button>`;
+    } else if (shared) {
+      action = `<button class="action-button" type="button" disabled>Reserved</button>`;
     } else {
-      action = `<button class="action-button" type="button" data-slot-id="${escapeHtml(slot.id)}" ${!enabled || !bookingOpen || ownReservation ? "disabled" : ""}>${bookingOpen ? "Choose" : "Closed"}</button>`;
+      const disabled = !enabled || !bookingOpen || ownReservation || !state.apiReady;
+      const label = !state.apiReady ? "Wait" : bookingOpen ? "Choose" : "Closed";
+      action = `<button class="action-button" type="button" data-slot-id="${escapeHtml(slot.id)}" ${disabled ? "disabled" : ""}>${label}</button>`;
     }
     return `<article class="${className}">
       ${photo}
@@ -286,7 +370,7 @@ function hideMessage() {
 function openBooking(slotId) {
   const slot = state.config.slots.find((item) => item.id === slotId);
   const prayer = state.config.prayers.find((item) => item.id === state.prayerId);
-  if (!slot || !prayer || !isPrayerOpen(prayer) || reservationForPrayer()) return;
+  if (!slot || !prayer || !isPrayerOpen(prayer) || !state.apiReady || activeSharedReservation()) return;
   const contact = readStorage(CONTACT_KEY, {});
   elements.bookingSlotId.value = slot.id;
   elements.bookingPrayer.textContent = displayPrayerName(prayer);
@@ -304,7 +388,7 @@ function closeBooking() {
   document.body.style.overflow = "";
 }
 
-function saveReservation(event) {
+async function saveReservation(event) {
   event.preventDefault();
   const name = elements.memberName.value.trim();
   const phone = elements.memberPhone.value.trim();
@@ -320,7 +404,7 @@ function saveReservation(event) {
     return;
   }
   if (reservationForPrayer()) {
-    elements.formError.textContent = "Parking is already reserved for this prayer on this phone.";
+    elements.formError.textContent = "Parking is already reserved on this phone.";
     elements.formError.hidden = false;
     return;
   }
@@ -331,22 +415,49 @@ function saveReservation(event) {
     slotId: elements.bookingSlotId.value,
     name,
     phone,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + RESERVATION_DURATION_MS).toISOString(),
   };
-  state.reservations.push(reservation);
-  if (!writeStorage(STORAGE_KEY, state.reservations)) return;
-  writeStorage(CONTACT_KEY, { name, phone });
-  closeBooking();
-  render();
-  showMessage("Parking reserved on this phone for 1 hour.", false);
+  const submitButton = elements.bookingForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  elements.formError.hidden = true;
+
+  try {
+    const result = await apiRequest("/reserve", {
+      method: "POST",
+      body: JSON.stringify({ id: reservation.id, slotId: reservation.slotId, prayerId: reservation.prayerId }),
+    });
+    const localReservation = { ...reservation, ...result.reservation };
+    state.sharedReservation = result.reservation;
+    state.reservations = [localReservation];
+    if (!writeStorage(STORAGE_KEY, state.reservations)) {
+      await apiRequest("/release", { method: "POST", body: JSON.stringify({ id: reservation.id }) }).catch(() => {});
+      return;
+    }
+    writeStorage(CONTACT_KEY, { name, phone });
+    closeBooking();
+    render();
+    showMessage("Parking reserved for 1 hour. Other visitors can now see it is unavailable.", false);
+  } catch (error) {
+    if (error.details?.reservation) state.sharedReservation = error.details.reservation;
+    elements.formError.textContent = error.message;
+    elements.formError.hidden = false;
+    renderSlots();
+  } finally {
+    submitButton.disabled = false;
+  }
 }
 
-function removeReservation(id) {
-  state.reservations = state.reservations.filter((reservation) => reservation.id !== id);
-  writeStorage(STORAGE_KEY, state.reservations);
-  render();
-  showMessage("Parking reservation removed from this phone.", false);
+async function removeReservation(id) {
+  try {
+    await apiRequest("/release", { method: "POST", body: JSON.stringify({ id }) });
+    state.sharedReservation = null;
+    state.reservations = state.reservations.filter((reservation) => reservation.id !== id);
+    writeStorage(STORAGE_KEY, state.reservations);
+    render();
+    showMessage("Parking reservation removed and available to other visitors.", false);
+  } catch (error) {
+    showMessage(error.message, true);
+    await refreshSharedReservation();
+  }
 }
 
 async function start() {
@@ -356,10 +467,14 @@ async function start() {
     state.config = validateConfig(await response.json());
     document.title = state.config.siteName;
     elements.communityName.textContent = state.config.communityName;
+    if (state.config.testMode === true) {
+      elements.prayerDisclaimer.textContent = "Test mode is active: booking is open for every prayer at any time.";
+    }
     renderToday();
     state.prayerId = currentPrayer()?.id || null;
     pruneReservations();
     render();
+    await refreshSharedReservation(true);
   } catch (error) {
     elements.availability.textContent = "Unavailable";
     elements.slotList.innerHTML = "";
@@ -394,6 +509,16 @@ start();
 window.setInterval(() => {
   const previousCount = state.reservations.length;
   pruneReservations();
-  if (state.config) renderSlots();
-  if (previousCount > state.reservations.length) showMessage("Your 1-hour parking reservation has ended.", false);
+  if (!state.config) return;
+  if (previousCount > state.reservations.length || (state.sharedReservation && !activeSharedReservation())) {
+    state.sharedReservation = null;
+    renderSlots();
+    if (previousCount > state.reservations.length) showMessage("Your 1-hour parking reservation has ended.", false);
+  } else {
+    updateReleaseTimers();
+  }
 }, 1000);
+
+window.setInterval(() => {
+  if (state.config) refreshSharedReservation();
+}, 5000);

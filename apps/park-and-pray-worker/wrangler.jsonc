@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "park-and-pray-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-10",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PARKING_SLOT",
+        "class_name": "ParkingSlot"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ParkingSlot"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
